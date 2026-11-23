@@ -20,6 +20,9 @@ try {
     foreach ($asset in 'guinea-pig.png', 'paw.png', 'keyboard.png', 'mouse.png') {
         $arguments += "/resource:assets/$asset,$asset"
     }
+    foreach ($asset in Get-ChildItem -LiteralPath 'assets/skins' -Filter '*.png' -File) {
+        $arguments += "/resource:assets/skins/$($asset.Name),$($asset.Name)"
+    }
     $sources = (Get-ChildItem -LiteralPath 'src' -Filter '*.cs').FullName
     & $compiler @arguments @sources
     if ($LASTEXITCODE -ne 0) { throw 'Compilation failed. Close WheekKeys before rebuilding.' }

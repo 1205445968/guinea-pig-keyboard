@@ -150,6 +150,13 @@ namespace WheekKeys
             SaveSettings();
         }
 
+        private void SetSkin(PetSkin skin)
+        {
+            scene.Skin = skin;
+            RefreshTrayMenu();
+            SaveSettings();
+        }
+
         private void SetWidth(double width)
         {
             Width = Math.Max(180, Math.Min(600, width));
@@ -180,6 +187,19 @@ namespace WheekKeys
         private ContextMenu BuildWindowMenu()
         {
             ContextMenu menu = new ContextMenu();
+            MenuItem skins = new MenuItem();
+            skins.Header = "切换外观";
+            foreach (PetSkin skin in PetSkin.All)
+            {
+                PetSkin currentSkin = skin;
+                MenuItem item = new MenuItem();
+                item.Header = currentSkin.Name;
+                item.IsCheckable = true;
+                item.IsChecked = scene.Skin.Id == currentSkin.Id;
+                item.Click += delegate { SetSkin(currentSkin); };
+                skins.Items.Add(item);
+            }
+            menu.Items.Add(skins);
             foreach (MenuAction entry in MenuActions())
             {
                 MenuAction current = entry;
@@ -194,6 +214,16 @@ namespace WheekKeys
         private Forms.ContextMenuStrip BuildTrayMenu()
         {
             Forms.ContextMenuStrip menu = new Forms.ContextMenuStrip();
+            Forms.ToolStripMenuItem skins = new Forms.ToolStripMenuItem("切换外观");
+            foreach (PetSkin skin in PetSkin.All)
+            {
+                PetSkin currentSkin = skin;
+                Forms.ToolStripMenuItem item = new Forms.ToolStripMenuItem(currentSkin.Name);
+                item.Checked = scene.Skin.Id == currentSkin.Id;
+                item.Click += delegate { SetSkin(currentSkin); };
+                skins.DropDownItems.Add(item);
+            }
+            menu.Items.Add(skins);
             foreach (MenuAction entry in MenuActions())
             {
                 MenuAction current = entry;
@@ -257,6 +287,7 @@ namespace WheekKeys
                 Top = top;
                 scene.ShowKeyLabels = labels;
                 clickThrough = through;
+                scene.Skin = PetSkin.FromId(values.Length > 5 ? values[5] : null);
             }
             catch { MoveToCorner(); }
         }
@@ -269,7 +300,7 @@ namespace WheekKeys
                 Directory.CreateDirectory(Path.GetDirectoryName(settingsPath));
                 File.WriteAllLines(settingsPath, new string[] {
                     Left.ToString("R", CultureInfo.InvariantCulture), Top.ToString("R", CultureInfo.InvariantCulture),
-                    Width.ToString("R", CultureInfo.InvariantCulture), scene.ShowKeyLabels.ToString(), clickThrough.ToString() });
+                    Width.ToString("R", CultureInfo.InvariantCulture), scene.ShowKeyLabels.ToString(), clickThrough.ToString(), scene.Skin.Id });
             }
             catch { }
         }
