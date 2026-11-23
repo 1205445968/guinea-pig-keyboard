@@ -31,7 +31,7 @@ Windows 10 或 11 用户下载后双击 `WheekKeys.exe` 即可。Mac 用户（ma
 
 非盈利的vibe项目，纯粹分享给同样喜欢荷兰猪的朋友。
 
-感谢 [BongoCat](https://github.com/KeyLimePie7/BongoCat)、[DesktopKitty](https://github.com/MayankArambhi/DesktopKitty) 提供的参考，以及 [7paws](https://github.com/7wdn/7paws) 的美术参考。
+感谢 [BongoCat](https://github.com/KeyLimePie7/BongoCat)、[DesktopKitty](https://github.com/MayankArambhi/DesktopKitty) 提供的参考。
 
 ## ☕ Buy me a coffee
 
