@@ -222,11 +222,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
 }
 
-if CommandLine.arguments.contains("--smoke-test") {
-    runSmokeTest()
-} else {
-    let application = NSApplication.shared
-    let delegate = AppDelegate()
-    application.delegate = delegate
-    withExtendedLifetime(delegate) { application.run() }
+@main
+struct WheekKeysApp {
+    @MainActor static func main() {
+        if CommandLine.arguments.contains("--smoke-test") {
+            runSmokeTest()
+            return
+        }
+        let application = NSApplication.shared
+        let delegate = AppDelegate()
+        application.delegate = delegate
+        withExtendedLifetime(delegate) { application.run() }
+    }
 }
