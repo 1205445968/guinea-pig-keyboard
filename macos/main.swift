@@ -30,6 +30,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private var window: PetPanel!
     private var pet: PetView!
     private var statusItem: NSStatusItem!
+    private var settingsPopover: NSPopover?
+    private var settingsController: PetSettingsViewController?
     private var eventTap: CFMachPort?
     private var eventSource: CFRunLoopSource?
     private var skinID = "tricolor"
@@ -67,14 +69,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         pet.autoresizingMask = [.width, .height]
         pet.selectSkin(skinID)
         pet.showKeyLabels = showLabels
+        pet.onOpenSettings = { [weak self] in self?.showSettings() }
         window.contentView = pet
-        let contextMenu = NSMenu()
-        contextMenu.delegate = self
-        pet.menu = contextMenu
         window.orderFrontRegardless()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let url = Bundle.main.url(forResource: "guinea-pig", withExtension: "png"),
+        if let url = Bundle.main.url(forResource: "avatar", withExtension: "png"),
            let icon = NSImage(contentsOf: url) {
             icon.size = NSSize(width: 20, height: 20)
             statusItem.button?.image = icon
@@ -116,6 +116,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
 
     private func populate(_ menu: NSMenu) {
+        add("桌宠设置…", #selector(showSettingsFromMenu(_:)), to: menu)
+        menu.addItem(.separator())
         let skins = NSMenu()
         for skin in PetSkin.all {
             add(skin.name, #selector(selectSkin(_:)), to: skins, state: skin.id == skinID, represented: skin.id)
@@ -143,9 +145,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
 
     @objc private func selectSkin(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
+        applySkin(id)
+    }
+    private func applySkin(_ id: String) {
         skinID = PetSkin.named(id).id
         defaults.set(skinID, forKey: "skin")
         pet.selectSkin(skinID)
+        refreshSettings()
     }
     @objc private func enlarge() { resize(to: min(2.0, scale + 0.1)) }
     @objc private func shrink() { resize(to: max(0.5, scale - 0.1)) }
@@ -156,16 +162,70 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         let size = NSSize(width: baseSize.width * scale, height: baseSize.height * scale)
         window.setFrame(NSRect(x: oldFrame.maxX - size.width, y: oldFrame.minY, width: size.width, height: size.height), display: true)
         savePosition()
+        refreshSettings()
     }
     @objc private func toggleLabels() {
         showLabels.toggle()
         pet.showKeyLabels = showLabels
         defaults.set(showLabels, forKey: "showKeyLabels")
+        refreshSettings()
     }
     @objc private func toggleClickThrough() {
         clickThrough.toggle()
         window.ignoresMouseEvents = clickThrough
         defaults.set(clickThrough, forKey: "clickThrough")
+        refreshSettings()
+    }
+    @objc private func showSettingsFromMenu(_ sender: NSMenuItem) {
+        showSettings(anchor: statusItem.button)
+    }
+    private func showSettings(anchor: NSView? = nil) {
+        if settingsPopover?.isShown == true { return }
+        let controller: PetSettingsViewController
+        if let existing = settingsController {
+            controller = existing
+        } else {
+            let created = PetSettingsViewController()
+            created.onSelectSkin = { [weak self] in self?.applySkin($0) }
+            created.onScaleChange = { [weak self] delta in
+                guard let owner = self else { return }
+                owner.resize(to: min(2.0, max(0.5, owner.scale + delta)))
+            }
+            created.onShowLabelsChange = { [weak self] value in
+                guard let self, self.showLabels != value else { return }
+                self.toggleLabels()
+            }
+            created.onClickThroughChange = { [weak self] value in
+                guard let self, self.clickThrough != value else { return }
+                self.toggleClickThrough()
+            }
+            created.onReturnToCorner = { [weak self] in self?.returnToCorner() }
+            created.onQuit = { [weak self] in self?.quit() }
+            created.onClose = { [weak self] in self?.settingsPopover?.performClose(nil) }
+            settingsController = created
+            let popover = NSPopover()
+            popover.behavior = .transient
+            popover.animates = true
+            popover.contentViewController = created
+            popover.contentSize = created.view.frame.size
+            settingsPopover = popover
+            controller = created
+        }
+        controller.refresh(skinID: skinID, scale: scale, showLabels: showLabels, clickThrough: clickThrough)
+        let source: NSView = anchor ?? pet
+        settingsPopover?.show(relativeTo: source.bounds, of: source, preferredEdge: anchor == nil ? .maxY : .minY)
+        if let popoverWindow = settingsPopover?.contentViewController?.view.window {
+            popoverWindow.makeFirstResponder(controller.view)
+        }
+    }
+    private func refreshSettings() {
+        settingsController?.refresh(skinID: skinID, scale: scale, showLabels: showLabels, clickThrough: clickThrough)
+    }
+    private func returnToCorner() {
+        let screen = window.screen ?? NSScreen.main ?? NSScreen.screens[0]
+        let visible = screen.visibleFrame
+        window.setFrameOrigin(NSPoint(x: visible.maxX - window.frame.width - 20, y: visible.minY + 20))
+        savePosition()
     }
     @objc private func toggleVisible() {
         if window.isVisible { window.orderOut(nil) } else { window.orderFrontRegardless() }

@@ -17,12 +17,15 @@ namespace WheekKeys
         private const double BubbleTime = 395;
         private PetSkin skin;
         private BitmapImage body;
-        private ImageSource paw;
+        private BitmapImage paw;
+        private Brush fur;
         private BitmapSource[] eyes;
-        private static readonly BitmapImage MouseSprite = Sprite("mouse.png");
+        private static readonly BitmapSource[] MouseSprites = MouseFrames();
+        private static readonly Pen LimbOutline = new Pen(Paint(81, 58, 39), 1.05);
         private static readonly SolidColorBrush Paper = Paint(255, 243, 216);
-        private static readonly SolidColorBrush Umber = Paint(111, 73, 47);
-        private static readonly SolidColorBrush Amber = Paint(218, 149, 84);
+        private static readonly SolidColorBrush Umber = Paint(78, 53, 30);
+        private static readonly SolidColorBrush Amber = Paint(229, 188, 97);
+        private static readonly int[] MirroredGaze = { 0, 2, 1, 3, 4, 6, 5, 8, 7 };
         private static readonly Pen InkLine = new Pen(Umber, 1.55);
         private static readonly Dictionary<string, FormattedText> Labels = new Dictionary<string, FormattedText>();
         private readonly Stopwatch clock = Stopwatch.StartNew();
@@ -33,11 +36,10 @@ namespace WheekKeys
         private double lastLook = double.NegativeInfinity;
         private Vector lookMotion;
         private int lookFrame;
-        // These names refer to the viewer's side. The guinea pig faces the viewer.
-        private readonly Stroke left = new Stroke(new Point(156, 214));
-        private readonly Stroke right = new Stroke(new Point(263, 214));
-        private Point mousePosition = new Point(31, 243);
-        private Point mouseDestination = new Point(31, 243);
+        private readonly Stroke left = new Stroke(new Point(172, 215));
+        private readonly Stroke right = new Stroke(new Point(215, 213));
+        private Point mousePosition = new Point(74, 234);
+        private Point mouseDestination = new Point(74, 234);
         private double lastFrame;
         private double lastMouseUse = double.NegativeInfinity;
         private double lastClick = double.NegativeInfinity;
@@ -82,10 +84,12 @@ namespace WheekKeys
             {
                 if (value == null || value == skin) return;
                 BitmapImage newBody = Sprite(value.BodyResource);
-                ImageSource newPaw = CreatePaw(value.PawResource);
+                BitmapImage newPaw = Sprite(value.PawResource);
                 BitmapSource[] newEyes = EyeFrames(value.Id);
-                body = newBody;
+                fur = value.Id == "teddy" ? Paint(168, 105, 70)
+                    : value.Id == "silver-agouti" ? Paint(161, 144, 134) : Paint(250, 228, 203);
                 paw = newPaw;
+                body = newBody;
                 eyes = newEyes;
                 skin = value;
                 InvalidateVisual();
@@ -103,15 +107,15 @@ namespace WheekKeys
             bool onRight = KeyboardArt.IsRight(scan);
             Stroke hand = onRight ? left : right;
             double now = clock.Elapsed.TotalMilliseconds;
-            Point start = hand.Position(now);
-            if (onRight)
-            {
-                start = MouseHand(start, now);
-                mouseGrip = 0;
-                lastMouseUse = double.NegativeInfinity;
-                lastClick = double.NegativeInfinity;
-            }
-            hand.Start(now, start, KeyboardArt.Target(scan, onRight), scan);
+            Pose pose = CurrentPose(now);
+            Point start = onRight ? pose.LeftTip : pose.RightTip;
+            Point target = KeyboardArt.Target(scan, onRight);
+            Stroke other = onRight ? right : left;
+            double when = now;
+            if (other.Active && other.Started <= now && Math.Abs(target.X - other.Target.X) > 140)
+                when = Math.Max(now, other.Started + 130);
+            lastMouseUse = lastClick = double.NegativeInfinity;
+            hand.Start(when, start, target, scan);
             Wake();
         }
 
@@ -131,8 +135,8 @@ namespace WheekKeys
                 else lookFrame = lookMotion.X < 0 ? 7 : 8;
             }
             lastLook = now;
-            mouseDestination.X = Math.Max(10, Math.Min(46, mouseDestination.X + dx * 0.12));
-            mouseDestination.Y = Math.Max(210, Math.Min(270, mouseDestination.Y + dy * 0.12));
+            mouseDestination.X = Math.Max(65, Math.Min(82, mouseDestination.X + dx * 0.055));
+            mouseDestination.Y = Math.Max(226, Math.Min(240, mouseDestination.Y + dy * 0.055));
             lastMouseUse = now;
             if (!animation.IsEnabled) Wake();
         }
@@ -140,7 +144,8 @@ namespace WheekKeys
         public void ClickMouse(bool isRightButton)
         {
             rightButton = isRightButton;
-            lastMouseUse = lastClick = clock.Elapsed.TotalMilliseconds;
+            lastMouseUse = clock.Elapsed.TotalMilliseconds;
+            lastClick = lastMouseUse + (1 - mouseGrip) * 110;
             Wake();
         }
 
@@ -174,7 +179,7 @@ namespace WheekKeys
             var sheet = Sprite(id + "-eyes.png");
             int w = sheet.PixelWidth / 4, h = sheet.PixelHeight / 3;
             var frames = new BitmapSource[12];
-            for (int i = 1; i < frames.Length; i++)
+            for (int i = 0; i < frames.Length; i++)
             {
                 frames[i] = new CroppedBitmap(sheet, new Int32Rect(i % 4 * w, i / 4 * h, w, h));
                 frames[i].Freeze();
@@ -186,27 +191,27 @@ namespace WheekKeys
         {
             double elapsed = Math.Max(0, now - lastFrame);
             lastFrame = now;
-            mousePosition += (mouseDestination - mousePosition) * (1 - Math.Exp(-elapsed / 32));
+            bool holding = now - lastMouseUse < 520;
+            bool typing = double.IsNegativeInfinity(lastMouseUse);
+            mouseGrip = holding ? Math.Min(1, mouseGrip + elapsed / 145)
+                : Math.Max(0, mouseGrip - elapsed / (typing ? 55 : 195));
+            double traction = Smooth(Math.Max(0, (mouseGrip - 0.64) / 0.36));
+            mousePosition += (mouseDestination - mousePosition) * (1 - Math.Exp(-elapsed / 48)) * traction;
             if ((mouseDestination - mousePosition).LengthSquared < 0.01) mousePosition = mouseDestination;
-
-            bool tapping = left.Active && now - left.Started < 130 && left.Started > lastClick;
-            double gripTarget = !tapping && now - lastMouseUse <= 250 ? 1 : 0;
-            double ease = 1 - Math.Exp(-elapsed / (gripTarget > mouseGrip ? 30 : 53));
-            mouseGrip += (gripTarget - mouseGrip) * ease;
-            if (Math.Abs(gripTarget - mouseGrip) < 0.004) mouseGrip = gripTarget;
+            if (!holding && mouseGrip == 0) mouseDestination = mousePosition;
         }
 
-        private Point MouseButtonPoint()
+        private static BitmapSource[] MouseFrames()
         {
-            return mousePosition + new Vector(rightButton ? -6 : 6, 11);
-        }
-
-        private Point MouseHand(Point keyboardTip, double now)
-        {
-            double press = Contact(now - lastClick);
-            Point palm = mousePosition + new Vector(3, -2);
-            Point target = palm + (MouseButtonPoint() - palm) * press;
-            return keyboardTip + (target - keyboardTip) * mouseGrip;
+            var sheet = Sprite("mouse.png");
+            var frames = new BitmapSource[3];
+            int w = sheet.PixelWidth / frames.Length;
+            for (int i = 0; i < frames.Length; i++)
+            {
+                frames[i] = new CroppedBitmap(sheet, new Int32Rect(i * w, 0, w, sheet.PixelHeight));
+                frames[i].Freeze();
+            }
+            return frames;
         }
 
         private sealed class Stroke
@@ -247,6 +252,13 @@ namespace WheekKeys
                 return result;
             }
 
+            public double RestWeight(double now)
+            {
+                if (!Active) return 1;
+                double age = Math.Max(0, now - Started);
+                return Smooth(Math.Max(0, Math.Min(1, (age - 102) / (SettleTime - 102))));
+            }
+
             public double Contact(double now)
             {
                 return Active ? PetScene.Contact(now - Started) : 0;
@@ -284,22 +296,6 @@ namespace WheekKeys
             }
         }
 
-        private static ImageSource CreatePaw(string resource)
-        {
-            var mask = new LinearGradientBrush();
-            mask.StartPoint = new Point(0, 0);
-            mask.EndPoint = new Point(0, 1);
-            mask.GradientStops.Add(new GradientStop(Colors.Transparent, 0));
-            mask.GradientStops.Add(new GradientStop(Colors.White, 0.27));
-            var layer = new DrawingGroup();
-            layer.OpacityMask = mask;
-            using (DrawingContext dc = layer.Open())
-                dc.DrawImage(Sprite(resource), new Rect(0, 0, 34, 60));
-            var image = new DrawingImage(layer);
-            image.Freeze();
-            return image;
-        }
-
         private static SolidColorBrush Paint(byte r, byte g, byte b)
         {
             SolidColorBrush brush = new SolidColorBrush(Color.FromRgb(r, g, b));
@@ -307,66 +303,98 @@ namespace WheekKeys
             return brush;
         }
 
+        private struct Pose
+        {
+            public Rect Body;
+            public Point LeftTip, RightTip;
+        }
+
+        private Pose CurrentPose(double now)
+        {
+            Point lp = left.Position(now), rp = right.Position(now);
+            double grip = Smooth(mouseGrip);
+            double lean = Math.Max(-78, Math.Min(115, ((lp.X - left.Rest.X) + (rp.X - right.Rest.X)) * 0.84));
+            lean += (mousePosition.X - 8 - 135 - lean) * grip;
+            double reachY = Math.Max(0, Math.Max(lp.Y - left.Rest.Y, rp.Y - right.Rest.Y));
+            double dip = Math.Min(19, reachY * 0.42) * (1 - grip) + (12 + (mousePosition.Y - 226) * 0.45) * grip;
+            lp += new Vector(lean, dip * 0.68) * left.RestWeight(now);
+            rp += new Vector(lean, dip * 0.68) * right.RestWeight(now);
+
+            // 空着的前爪撑在键盘后沿，另一只绕过机身落到鼠标上。
+            Point brace = new Point(153, 227);
+            rp += (brace - rp) * (grip * right.RestWeight(now));
+            double press = Contact(now - lastClick);
+            Point mouseTip = mousePosition + new Vector(5.5 + (rightButton ? -11 : -1) * press,
+                                                       2.5 + (rightButton ? -1 : 3.2) * press);
+            lp += (mouseTip - lp) * grip;
+            lp.Y -= Math.Sin(grip * Math.PI) * 5;
+            return new Pose { Body = new Rect(135 + lean, 123 + dip, 129, 85), LeftTip = lp, RightTip = rp };
+        }
+
         protected override void OnRender(DrawingContext dc)
         {
             double now = clock.Elapsed.TotalMilliseconds;
-            Point lp = MouseHand(left.Position(now), now);
-            Point rp = right.Position(now);
+            Pose pose = CurrentPose(now);
             double l = left.Contact(now), r = right.Contact(now);
-            double lean = ((lp.X - left.Rest.X) + (rp.X - right.Rest.X)) * 0.107;
-            double click = Contact(now - lastClick);
-            double dip = Math.Max(click, Math.Max(l, r)) * 3.4;
             dc.PushTransform(new TranslateTransform(9, 0));
-            Rect bodyRect = new Rect(84 + lean, 12 + dip, 251, 209 - dip * 0.4);
-            dc.DrawImage(body, bodyRect);
-            int frame = BlinkFrame(now - blinkStarted);
-            if (frame == 0) frame = lookFrame;
-            if (frame != 0)
-                dc.DrawImage(eyes[frame], new Rect(bodyRect.X + bodyRect.Width * 0.16, bodyRect.Y + bodyRect.Height * 0.19,
-                    bodyRect.Width * 0.68, bodyRect.Height * 0.27));
-            DrawMouse(dc, click);
             KeyboardArt.Draw(dc, right.Scan, r, left.Scan, l);
-            DrawPaw(dc, lp, left.Rest, false, lean, dip);
-            DrawPaw(dc, rp, right.Rest, true, lean, dip);
+            double press = Contact(now - lastClick) * Smooth(mouseGrip);
+            int mouseFrame = press > 0.32 ? (rightButton ? 2 : 1) : 0;
+            dc.DrawImage(MouseSprites[mouseFrame], new Rect(mousePosition.X - 20, mousePosition.Y - 18, 40, 36));
+
+            DrawPaw(dc, pose.RightTip, pose.Body, true);
+            DrawPaw(dc, pose.LeftTip, pose.Body, false);
+            Rect b = pose.Body;
+            dc.PushTransform(new ScaleTransform(-1, 1, b.X + b.Width / 2, 0));
+            dc.DrawImage(body, b);
+            int frame = BlinkFrame(now - blinkStarted);
+            if (frame == 0) frame = Math.Max(l, r) > 0.45 ? 10 : MirroredGaze[lookFrame];
+            dc.DrawImage(eyes[frame], new Rect(b.X + b.Width * 0.58, b.Y + b.Height * 0.25, b.Width * 0.22, b.Height * 0.30));
+            dc.Pop();
             if (showKeyLabels)
             {
-                DrawBubble(dc, left, now, false);
-                DrawBubble(dc, right, now, true);
+                DrawBubble(dc, left, now, false, b);
+                DrawBubble(dc, right, now, true, b);
             }
             dc.Pop();
         }
 
-        private void DrawPaw(DrawingContext dc, Point tip, Point rest, bool onRight, double lean, double dip)
+        private void DrawPaw(DrawingContext dc, Point tip, Rect chest, bool far)
         {
-            // Keep the shoulder inside the chest while the toe follows the struck key.
-            double shoulderX = rest.X + (onRight ? -8 : 8) + (tip.X - rest.X) * 0.23 + lean;
-            Point shoulder = new Point(shoulderX, 165 + dip + (tip.Y - rest.Y) * 0.22);
+            double grip = far ? 0 : Smooth(mouseGrip);
+            double anchorX = chest.X + (far ? 75 : 36);
+            Point shoulder = new Point(anchorX + Math.Max(-13, Math.Min(13, (tip.X - anchorX) * 0.30)), chest.Y + 63);
             Vector reach = tip - shoulder;
-            double angle = -Math.Atan2(reach.X, reach.Y) * 180 / Math.PI;
-            double width = 34 - Math.Min(4, Math.Max(0, reach.Length - 50) * 0.10);
-            dc.PushTransform(new TranslateTransform(shoulder.X, shoulder.Y));
-            dc.PushTransform(new RotateTransform(angle));
-            if (onRight) dc.PushTransform(new ScaleTransform(-1, 1));
-            dc.DrawImage(paw, new Rect(-width / 2, 0, width, reach.Length + 2.5));
-            if (onRight) dc.Pop();
-            dc.Pop();
-            dc.Pop();
-        }
-
-        private void DrawMouse(DrawingContext dc, double press)
-        {
-            dc.PushTransform(new RotateTransform(180, mousePosition.X, mousePosition.Y));
-            dc.DrawImage(MouseSprite, new Rect(mousePosition.X - 17, mousePosition.Y - 24 + press, 34, 48 - press));
-            dc.Pop();
-            if (press > 0)
+            double angle = Math.Max(-0.58, Math.Min(0.58, -Math.Atan2(reach.X, reach.Y)));
+            angle += (0.52 - angle) * grip;
+            Vector down = new Vector(-Math.Sin(angle), Math.Cos(angle));
+            Point joint = tip - down * 6.8;
+            Vector axis = joint - shoulder;
+            double length = axis.Length;
+            if (length > 1)
             {
-                dc.PushOpacity(press * 0.38);
-                dc.DrawEllipse(Amber, null, MouseButtonPoint(), 4.5, 6.2);
-                dc.Pop();
+                Vector normal = new Vector(axis.Y / length, -axis.X / length);
+                Point bend = shoulder + axis * 0.55 + new Vector(far ? 2.6 : -3.2, -2.0);
+                var arm = new StreamGeometry();
+                using (StreamGeometryContext path = arm.Open())
+                {
+                    path.BeginFigure(shoulder - normal * 6.2, true, true);
+                    path.QuadraticBezierTo(bend - normal * 5.5, joint - normal * 4.5, true, true);
+                    path.LineTo(joint + normal * 4.5, true, true);
+                    path.QuadraticBezierTo(bend + normal * 5.5, shoulder + normal * 6.2, true, true);
+                }
+                dc.DrawGeometry(fur, LimbOutline, arm);
             }
+            dc.PushTransform(new TranslateTransform(tip.X, tip.Y));
+            dc.PushTransform(new RotateTransform(angle * 180 / Math.PI));
+            if (far) dc.PushTransform(new ScaleTransform(-1, 1));
+            dc.DrawImage(paw, new Rect(-8.5 + 1.1 * grip, -15 + 2 * grip, 17 - 2.2 * grip, 15.4 - 2 * grip));
+            if (far) dc.Pop();
+            dc.Pop();
+            dc.Pop();
         }
 
-        private static void DrawBubble(DrawingContext dc, Stroke stroke, double now, bool onRight)
+        private static void DrawBubble(DrawingContext dc, Stroke stroke, double now, bool onRight, Rect bodyRect)
         {
             if (!stroke.Active) return;
             string label = KeyboardArt.Label(stroke.Scan);
@@ -385,6 +413,8 @@ namespace WheekKeys
             double w = Math.Max(29, text.Width + 13);
             double x = onRight ? Math.Max(300, stroke.Target.X + 6) : Math.Min(90, stroke.Target.X - 6);
             double y = 173 - 34 * t;
+            if (x + w / 2 > bodyRect.Left - 5 && x - w / 2 < bodyRect.Right + 5)
+                y = Math.Min(y, bodyRect.Top - 18);
             dc.PushOpacity(opacity);
             dc.PushTransform(new RotateTransform(onRight ? 7 : -7, x, y));
             dc.DrawRoundedRectangle(Amber, InkLine, new Rect(x - w / 2, y - 11, w, 25), 5, 5);

@@ -59,6 +59,7 @@ namespace WheekKeys
         private DesktopInput input;
         private bool clickThrough;
         private bool ready;
+        private PetSettings settingsWindow;
         private Drawing.Icon ownedIcon;
 
         public PetWindow()
@@ -108,14 +109,14 @@ namespace WheekKeys
             };
             MouseRightButtonUp += delegate(object sender, MouseButtonEventArgs e)
             {
-                ContextMenu menu = BuildWindowMenu();
-                menu.PlacementTarget = this;
-                menu.IsOpen = true;
+                Point screen = PointToScreen(e.GetPosition(this));
+                OpenSettings(new Drawing.Point((int)screen.X, (int)screen.Y));
                 e.Handled = true;
             };
             Closed += delegate
             {
                 SaveSettings();
+                if (settingsWindow != null) settingsWindow.Close();
                 if (input != null) input.Dispose();
                 tray.Visible = false;
                 tray.Dispose();
@@ -138,7 +139,50 @@ namespace WheekKeys
             SetWindowLong(handle, GwlExStyle, style);
         }
 
-        private void SetClickThrough(bool value)
+        private void OpenSettings(Drawing.Point screenPoint)
+        {
+            if (settingsWindow != null && settingsWindow.IsVisible)
+            {
+                settingsWindow.Activate();
+                return;
+            }
+
+            settingsWindow = new PetSettings(this);
+            settingsWindow.Owner = this;
+            Drawing.Rectangle work = Forms.Screen.FromPoint(screenPoint).WorkingArea;
+            HwndSource source = PresentationSource.FromVisual(this) as HwndSource;
+            Matrix fromPixels = source == null ? Matrix.Identity : source.CompositionTarget.TransformFromDevice;
+            Point cursor = fromPixels.Transform(new Point(screenPoint.X, screenPoint.Y));
+            Point start = fromPixels.Transform(new Point(work.Left, work.Top));
+            Point end = fromPixels.Transform(new Point(work.Right, work.Bottom));
+            double left = cursor.X + 10;
+            double top = cursor.Y + 10;
+            if (left + settingsWindow.Width > end.X) left = cursor.X - settingsWindow.Width - 10;
+            if (top + settingsWindow.Height > end.Y) top = cursor.Y - settingsWindow.Height - 10;
+            settingsWindow.PlaceAt(
+                Math.Max(start.X, Math.Min(left, Math.Max(start.X, end.X - settingsWindow.Width))),
+                Math.Max(start.Y, Math.Min(top, Math.Max(start.Y, end.Y - settingsWindow.Height))));
+            settingsWindow.Show();
+            settingsWindow.Activate();
+        }
+
+        private void OpenSettingsAtCursor()
+        {
+            Drawing.Point cursor = Forms.Cursor.Position;
+            OpenSettings(cursor);
+        }
+
+        internal void SettingsClosed(PetSettings window)
+        {
+            if (ReferenceEquals(settingsWindow, window)) settingsWindow = null;
+        }
+
+        internal PetSkin ActiveSkin { get { return scene.Skin; } }
+        internal bool LabelsVisible { get { return scene.ShowKeyLabels; } }
+        internal bool MouseClickThrough { get { return clickThrough; } }
+        internal double PetWidth { get { return Width; } }
+
+        internal void SetClickThrough(bool value)
         {
             clickThrough = value;
             IntPtr handle = new WindowInteropHelper(this).Handle;
@@ -147,21 +191,21 @@ namespace WheekKeys
             SaveSettings();
         }
 
-        private void SetLabels(bool value)
+        internal void SetLabels(bool value)
         {
             scene.ShowKeyLabels = value;
             RefreshTrayMenu();
             SaveSettings();
         }
 
-        private void SetSkin(PetSkin skin)
+        internal void SetSkin(PetSkin skin)
         {
             scene.Skin = skin;
             RefreshTrayMenu();
             SaveSettings();
         }
 
-        private void SetWidth(double width)
+        internal void SetWidth(double width)
         {
             Width = Math.Max(180, Math.Min(600, width));
             Height = Width * 308.0 / 400.0;
@@ -188,36 +232,11 @@ namespace WheekKeys
             };
         }
 
-        private ContextMenu BuildWindowMenu()
-        {
-            ContextMenu menu = new ContextMenu();
-            MenuItem skins = new MenuItem();
-            skins.Header = "切换外观";
-            foreach (PetSkin skin in PetSkin.All)
-            {
-                PetSkin currentSkin = skin;
-                MenuItem item = new MenuItem();
-                item.Header = currentSkin.Name;
-                item.IsCheckable = true;
-                item.IsChecked = scene.Skin.Id == currentSkin.Id;
-                item.Click += delegate { SetSkin(currentSkin); };
-                skins.Items.Add(item);
-            }
-            menu.Items.Add(skins);
-            foreach (MenuAction entry in MenuActions())
-            {
-                MenuAction current = entry;
-                MenuItem item = new MenuItem();
-                item.Header = current.Label;
-                item.Click += delegate { current.Action(); };
-                menu.Items.Add(item);
-            }
-            return menu;
-        }
-
         private Forms.ContextMenuStrip BuildTrayMenu()
         {
             Forms.ContextMenuStrip menu = new Forms.ContextMenuStrip();
+            menu.Items.Add("桌宠设置…", null, delegate { OpenSettingsAtCursor(); });
+            menu.Items.Add(new Forms.ToolStripSeparator());
             Forms.ToolStripMenuItem skins = new Forms.ToolStripMenuItem("切换外观");
             foreach (PetSkin skin in PetSkin.All)
             {
@@ -243,7 +262,7 @@ namespace WheekKeys
             if (old != null) old.Dispose();
         }
 
-        private void MoveToCorner()
+        internal void MoveToCorner()
         {
             Rect area = SystemParameters.WorkArea;
             Left = Math.Max(area.Left, area.Right - Width - 12);

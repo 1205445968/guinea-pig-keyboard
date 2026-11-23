@@ -15,16 +15,17 @@ cp macos/Info.plist "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $version" "$app/Contents/Info.plist"
 cp assets/*.png "$app/Contents/Resources/"
+cp assets/keyboard-layout.txt "$app/Contents/Resources/keyboard-layout.txt"
 if [ -d assets/skins ]; then cp assets/skins/*.png "$app/Contents/Resources/"; fi
 mkdir "$work/WheekKeys.iconset"
 for size in 16 32 128 256 512; do
-  sips -z "$size" "$size" assets/guinea-pig.png --out "$work/WheekKeys.iconset/icon_${size}x${size}.png" >/dev/null
+  sips -z "$size" "$size" assets/avatar.png --out "$work/WheekKeys.iconset/icon_${size}x${size}.png" >/dev/null
   double=$((size * 2))
-  sips -z "$double" "$double" assets/guinea-pig.png --out "$work/WheekKeys.iconset/icon_${size}x${size}@2x.png" >/dev/null
+  sips -z "$double" "$double" assets/avatar.png --out "$work/WheekKeys.iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$work/WheekKeys.iconset" -o "$app/Contents/Resources/WheekKeys.icns"
 for arch in arm64 x86_64; do
-  xcrun swiftc -swift-version 5 -parse-as-library -O -target "$arch-apple-macos11.0" macos/main.swift macos/PetView.swift macos/SmokeTest.swift -o "$work/WheekKeys-$arch"
+  xcrun swiftc -swift-version 5 -parse-as-library -O -target "$arch-apple-macos11.0" macos/main.swift macos/PetView.swift macos/PetSettings.swift macos/SmokeTest.swift -o "$work/WheekKeys-$arch"
 done
 lipo -create "$work/WheekKeys-arm64" "$work/WheekKeys-x86_64" -output "$app/Contents/MacOS/WheekKeys"
 chmod 755 "$app/Contents/MacOS/WheekKeys"
