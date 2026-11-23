@@ -44,7 +44,7 @@ jobs:
       - name: Build universal app
         shell: bash
         env:
-          RELEASE_TAG: ${{ inputs.release_tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '0.0.0' }}
+          RELEASE_TAG: ${{ inputs.release_tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '' }}
         run: bash macos/build.sh "$RELEASE_TAG"
       - name: Run Apple Silicon app from zip
         run: bash macos/test-package.sh dist/WheekKeys-macOS.zip
@@ -139,7 +139,9 @@ jobs:
             if (-not ($release.assets | Where-Object { $_.name -eq $name })) { throw "Missing release asset: $name" }
           }
           $notes = @'
-          右键点击桌宠，选「切换外观」，可以换上三花、白加州、黄白英短、美泰或雕灰。它们会偶尔眨眼，也会朝你移动鼠标的方向看一眼。
+          五款荷兰猪换上了手绘外观。键盘和鼠标缩小了一些，空格键就在爪边。移动鼠标时，荷兰猪会俯身搭上鼠标，左右点击也有各自的落爪动作。
+
+          右键点击荷兰猪，可以在新面板里换毛色、调整大小、开关按键气泡和鼠标穿透。开启穿透后，也可以从 Windows 托盘或 macOS 菜单栏打开设置。
 
           - Windows 10 / 11：下载 `WheekKeys.exe`，双击运行（需要 .NET Framework 4.8）。
           - macOS 11 及以上：下载 `WheekKeys-macOS.zip`，解压后把应用移入「应用程序」。Apple 芯片与 Intel Mac 使用同一个包。在桌宠菜单开启「输入监控」后，即可跟随其他应用中的键鼠动作。

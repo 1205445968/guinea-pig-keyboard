@@ -14,8 +14,8 @@ using Forms = System.Windows.Forms;
 using Drawing = System.Drawing;
 
 [assembly: AssemblyProduct("WheekKeys")]
-[assembly: AssemblyVersion("0.1.2.0")]
-[assembly: AssemblyInformationalVersion("0.1.2")]
+[assembly: AssemblyVersion("0.1.3.0")]
+[assembly: AssemblyInformationalVersion("0.1.3")]
 
 namespace WheekKeys
 {

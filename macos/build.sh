@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-version="${1:-0.0.0}"
+version="${1:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' macos/Info.plist)}"
 version="${version#v}"
 if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
   echo "Invalid version: $version" >&2
