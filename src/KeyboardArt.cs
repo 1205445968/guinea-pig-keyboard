@@ -8,6 +8,11 @@ namespace WheekKeys
 {
     internal static class KeyboardArt
     {
+        private const double TextureWidth = 1774;
+        private const double TextureHeight = 887;
+        private static readonly Rect KeyboardBounds = new Rect(64, 199, 318, 88);
+        private static readonly double[] RowEdges = { 119, 243, 367, 490, 612, 739 };
+
         private sealed class Key
         {
             public int Scan;
@@ -15,12 +20,12 @@ namespace WheekKeys
             public Point Center;
             public double Width;
             public FormattedText Label;
-            public Key(int scan, string text, double x, double y, double width)
+            public Key(int scan, string text, Point center, double width)
             {
                 Scan = scan;
                 Text = text;
-                Center = Map(x, y);
-                Width = width * 318.0 / 1774.0;
+                Center = center;
+                Width = width;
                 Label = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
                     new Typeface("Segoe UI Semibold"), text.Length > 1 ? 7.0 : 9.0, Ink, 1.0);
             }
@@ -46,37 +51,54 @@ namespace WheekKeys
             pen.Freeze();
             return pen;
         }
-        private static Point Map(double x, double y)
+        private static Matrix ProjectRow(int row)
         {
-            return new Point(382 - x * 318 / 1774, 290 - y * 88 / 887);
+            double top = RowEdges[row];
+            double bottom = RowEdges[row + 1];
+            // Reverse the row order while keeping the keycap bevels facing the viewer.
+            double targetTop = RowEdges[0] + RowEdges[RowEdges.Length - 1] - bottom;
+            double sourceMiddle = (top + bottom) / 2;
+            double targetMiddle = targetTop + (bottom - top) / 2;
+            double scaleX = KeyboardBounds.Width / TextureWidth * WellWidth(targetMiddle) / WellWidth(sourceMiddle);
+            double scaleY = KeyboardBounds.Height / TextureHeight;
+            return new Matrix(-scaleX, 0, 0, scaleY,
+                KeyboardBounds.X + (KeyboardBounds.Width + TextureWidth * scaleX) / 2,
+                KeyboardBounds.Y + (targetTop - top) * scaleY);
+        }
+        private static double WellWidth(double y)
+        {
+            double depth = (y - RowEdges[0]) / (RowEdges[RowEdges.Length - 1] - RowEdges[0]);
+            return 1604 + (1706 - 1604) * depth;
         }
         private static Key[] CreateKeys()
         {
             List<Key> keys = new List<Key>();
-            AddRow(keys, 171, new double[] { 151,276,400,522,647,769,889,1012,1135,1253,1370,1485,1613 },
+            AddRow(keys, 0, 171, new double[] { 151,276,400,522,647,769,889,1012,1135,1253,1370,1485,1613 },
                 new int[] { 1,2,3,4,5,6,7,8,9,10,11,12,14 },
                 new string[] { "Esc","1","2","3","4","5","6","7","8","9","0","-","⌫" });
-            AddRow(keys, 290, new double[] { 160,313,437,565,691,816,944,1071,1198,1322,1449,1600 },
+            AddRow(keys, 1, 290, new double[] { 160,313,437,565,691,816,944,1071,1198,1322,1449,1600 },
                 new int[] { 15,16,17,18,19,20,21,22,23,24,25,43 },
                 new string[] { "Tab","Q","W","E","R","T","Y","U","I","O","P","\\" });
-            AddRow(keys, 416, new double[] { 175,350,475,610,736,857,991,1121,1246,1375,1571 },
+            AddRow(keys, 2, 416, new double[] { 175,350,475,610,736,857,991,1121,1246,1375,1571 },
                 new int[] { 58,30,31,32,33,34,35,36,37,38,28 },
                 new string[] { "Caps","A","S","D","F","G","H","J","K","L","Enter" });
-            AddRow(keys, 541, new double[] { 193,402,537,663,797,923,1055,1181,1320,1450,1610 },
+            AddRow(keys, 3, 541, new double[] { 193,402,537,663,797,923,1055,1181,1320,1450,1610 },
                 new int[] { 42,44,45,46,47,48,49,50,51,52,54 },
                 new string[] { "Shift","Z","X","C","V","B","N","M",",",".","Shift" });
-            AddRow(keys, 662, new double[] { 127,281,417,878,1351,1495,1647 },
+            AddRow(keys, 4, 662, new double[] { 127,281,417,878,1351,1495,1647 },
                 new int[] { 29,0x15b,56,57,0x138,0x15d,0x11d },
                 new string[] { "Ctrl","◆","Alt","","Alt","Menu","Ctrl" });
             return keys.ToArray();
         }
-        private static void AddRow(List<Key> keys, double y, double[] x, int[] scans, string[] labels)
+        private static void AddRow(List<Key> keys, int row, double y, double[] x, int[] scans, string[] labels)
         {
+            Matrix projection = ProjectRow(row);
             for (int i = 0; i < scans.Length; i++)
             {
                 double width = scans[i] == 57 ? 720 :
                     (scans[i] == 28 || scans[i] == 42 || scans[i] == 54 ? 220 : 103);
-                keys.Add(new Key(scans[i], labels[i], x[i], y, width));
+                Point center = projection.Transform(new Point(x[i], y));
+                keys.Add(new Key(scans[i], labels[i], center, width * -projection.M11));
             }
         }
         private static Dictionary<int, Key> IndexKeys()
@@ -98,13 +120,45 @@ namespace WheekKeys
             DrawingGroup group = new DrawingGroup();
             using (DrawingContext dc = group.Open())
             {
-                dc.PushTransform(new RotateTransform(180, 223, 246));
-                dc.DrawImage(PetScene.Sprite("keyboard.png"), new Rect(64, 202, 318, 88));
+                ImageSource bitmap = PetScene.Sprite("keyboard.png");
+                dc.DrawImage(bitmap, KeyboardBounds);
+                StreamGeometry well = CreateWell();
+                dc.PushClip(well);
+                dc.DrawRectangle(Ink, null, well.Bounds);
+                for (int row = 0; row < RowEdges.Length - 1; row++)
+                {
+                    dc.PushTransform(new MatrixTransform(ProjectRow(row)));
+                    dc.PushClip(new RectangleGeometry(new Rect(0, RowEdges[row], TextureWidth,
+                        RowEdges[row + 1] - RowEdges[row])));
+                    dc.DrawImage(bitmap, new Rect(0, 0, TextureWidth, TextureHeight));
+                    dc.Pop();
+                    dc.Pop();
+                }
                 dc.Pop();
                 foreach (Key key in Keys) DrawLabel(dc, key, 0);
             }
             group.Freeze();
             return group;
+        }
+        private static StreamGeometry CreateWell()
+        {
+            double top = RowEdges[0];
+            double bottom = RowEdges[RowEdges.Length - 1];
+            double center = KeyboardBounds.Left + KeyboardBounds.Width / 2;
+            double topHalf = WellWidth(top) * KeyboardBounds.Width / TextureWidth / 2;
+            double bottomHalf = WellWidth(bottom) * KeyboardBounds.Width / TextureWidth / 2;
+            double topY = KeyboardBounds.Y + top * KeyboardBounds.Height / TextureHeight;
+            double bottomY = KeyboardBounds.Y + bottom * KeyboardBounds.Height / TextureHeight;
+            StreamGeometry well = new StreamGeometry();
+            using (StreamGeometryContext path = well.Open())
+            {
+                path.BeginFigure(new Point(center - topHalf, topY), true, true);
+                path.LineTo(new Point(center + topHalf, topY), false, false);
+                path.LineTo(new Point(center + bottomHalf, bottomY), false, false);
+                path.LineTo(new Point(center - bottomHalf, bottomY), false, false);
+            }
+            well.Freeze();
+            return well;
         }
         private static void DrawLabel(DrawingContext dc, Key key, double offset)
         {
