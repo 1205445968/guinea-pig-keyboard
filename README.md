@@ -17,8 +17,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/gwtt/guinea-pig-keyboard/releases"><img src="https://img.shields.io/github/v/release/gwtt/guinea-pig-keyboard?label=最新版本" alt="查看所有版本"></a>
-  <a href="https://github.com/gwtt/guinea-pig-keyboard/actions/workflows/windows.yml"><img src="https://img.shields.io/github/actions/workflow/status/gwtt/guinea-pig-keyboard/windows.yml?branch=main&amp;label=构建" alt="Windows 与 macOS 构建状态"></a>
+  <a href="https://github.com/gwtt/guinea-pig-keyboard/releases"><img src="docs/badges/version.svg" alt="查看版本 v0.1.3"></a>
+  <a href="https://github.com/gwtt/guinea-pig-keyboard/actions/workflows/windows.yml"><img src="https://github.com/gwtt/guinea-pig-keyboard/actions/workflows/windows.yml/badge.svg?branch=main" alt="Windows 与 macOS 实时构建状态"></a>
 </p>
 
 ![荷兰猪敲键盘、推无线鼠标的样子](preview.gif)
