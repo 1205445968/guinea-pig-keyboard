@@ -13,6 +13,10 @@ using System.Windows.Media.Imaging;
 using Forms = System.Windows.Forms;
 using Drawing = System.Drawing;
 
+[assembly: AssemblyProduct("WheekKeys")]
+[assembly: AssemblyVersion("0.1.2.0")]
+[assembly: AssemblyInformationalVersion("0.1.2")]
+
 namespace WheekKeys
 {
     internal static class Program
