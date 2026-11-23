@@ -33,6 +33,8 @@
 
 推送到 `main` 或向 `main` 提交拉取请求会触发 Windows 构建。发布新版本时，在要发布的提交上创建版本标签（例如 `v0.2.0`）并推送该标签。GitHub Actions 会编译该版本，并将 `WheekKeys.exe` 附在 GitHub Release 中。
 
+需要补发已有标签时，在 **Actions → Windows build → Run workflow** 选择 `main`，填写 `release_tag`。留空会只构建所选提交。
+
 ## 美术与参考
 
 角色和道具使用内置 ImageGen 分层生成，前爪、键帽反馈和气泡在 WPF 中实时组合。生成提示的主要描述如下。
