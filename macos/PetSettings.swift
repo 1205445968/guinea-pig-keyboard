@@ -11,8 +11,8 @@ final class PetSettingsViewController: NSViewController {
 
     private let skinButtons = Dictionary(uniqueKeysWithValues: PetSkin.all.map { ($0.id, NSButton()) })
     private let scaleValue = NSTextField(labelWithString: "100%")
-    private let labelsSwitch = NSButton(checkboxWith: "显示按键气泡", target: nil, action: nil)
-    private let clickThroughSwitch = NSButton(checkboxWith: "鼠标穿透", target: nil, action: nil)
+    private let labelsSwitch = NSButton(checkboxWithTitle: "显示按键气泡", target: nil, action: nil)
+    private let clickThroughSwitch = NSButton(checkboxWithTitle: "鼠标穿透", target: nil, action: nil)
 
     private let paper = NSColor(calibratedRed: 250 / 255, green: 246 / 255, blue: 235 / 255, alpha: 1)
     private let darkBrown = NSColor(calibratedRed: 77 / 255, green: 54 / 255, blue: 39 / 255, alpha: 1)
