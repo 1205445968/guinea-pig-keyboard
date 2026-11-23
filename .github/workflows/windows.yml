@@ -35,7 +35,7 @@ jobs:
           if-no-files-found: error
 
   macos-build:
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,6 +46,14 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.release_tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '0.0.0' }}
         run: bash macos/build.sh "$RELEASE_TAG"
+      - name: Run Apple Silicon app from zip
+        run: bash macos/test-package.sh dist/WheekKeys-macOS.zip
+      - name: Save rendered Mac preview
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macOS-preview
+          path: macos-frame.png
+          retention-days: 5
       - name: Upload macOS package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -55,46 +63,17 @@ jobs:
 
   macos-smoke:
     needs: macos-build
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [macos-15, macos-15-intel]
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-15-intel
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.sha }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: WheekKeys-macOS
-      - name: Verify and run universal package
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir unpacked
-          ditto -x -k WheekKeys-macOS.zip unpacked
-          app=unpacked/WheekKeys.app
-          test -x "$app/Contents/MacOS/WheekKeys"
-          lipo "$app/Contents/MacOS/WheekKeys" -verify_arch arm64 x86_64
-          codesign --verify --deep --strict --verbose=2 "$app"
-          "$app/Contents/MacOS/WheekKeys" --smoke-test macos-frame.png
-      - name: Save rendered Mac preview
-        if: matrix.runner == 'macos-15'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: macOS-preview
-          path: macos-frame.png
-          retention-days: 5
-      - name: Check normal startup
-        shell: bash
-        run: |
-          set -euo pipefail
-          unpacked/WheekKeys.app/Contents/MacOS/WheekKeys >startup.log 2>&1 &
-          pid=$!
-          trap 'kill "$pid" 2>/dev/null || true' EXIT
-          sleep 5
-          if ! kill -0 "$pid" 2>/dev/null; then
-            cat startup.log
-            wait "$pid" || true
-            exit 1
-          fi
+      - name: Run Intel app from zip
+        run: bash macos/test-package.sh WheekKeys-macOS.zip
 
   release:
     if: >-
