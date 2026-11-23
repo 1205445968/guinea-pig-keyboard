@@ -124,7 +124,7 @@ namespace WheekKeys
             HwndSource source = (HwndSource)PresentationSource.FromVisual(this);
             ApplyWindowStyles(source.Handle);
             EnsureVisible();
-            input = new DesktopInput(source, delegate(int scan) { scene.PressKey(scan); }, delegate(bool right) { scene.ClickMouse(right); });
+            input = new DesktopInput(source, scene.PressKey, scene.ClickMouse, scene.MoveMouse);
         }
 
         private void ApplyWindowStyles(IntPtr handle)

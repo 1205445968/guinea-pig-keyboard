@@ -20,7 +20,7 @@ namespace WheekKeys
                 Scan = scan;
                 Text = text;
                 Center = Map(x, y);
-                Width = width * 335.0 / 1774.0;
+                Width = width * 318.0 / 1774.0;
                 Label = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
                     new Typeface("Segoe UI Semibold"), text.Length > 1 ? 7.0 : 9.0, Ink, 1.0);
             }
@@ -48,7 +48,7 @@ namespace WheekKeys
         }
         private static Point Map(double x, double y)
         {
-            return new Point(32 + x * 335 / 1774, 194 + y * 102 / 887);
+            return new Point(382 - x * 318 / 1774, 290 - y * 88 / 887);
         }
         private static Key[] CreateKeys()
         {
@@ -98,7 +98,9 @@ namespace WheekKeys
             DrawingGroup group = new DrawingGroup();
             using (DrawingContext dc = group.Open())
             {
-                dc.DrawImage(PetScene.Sprite("keyboard.png"), new Rect(32, 194, 335, 102));
+                dc.PushTransform(new RotateTransform(180, 223, 246));
+                dc.DrawImage(PetScene.Sprite("keyboard.png"), new Rect(64, 202, 318, 88));
+                dc.Pop();
                 foreach (Key key in Keys) DrawLabel(dc, key, 0);
             }
             group.Freeze();
@@ -106,13 +108,15 @@ namespace WheekKeys
         }
         private static void DrawLabel(DrawingContext dc, Key key, double offset)
         {
+            dc.PushTransform(new RotateTransform(180, key.Center.X, key.Center.Y));
             dc.DrawText(key.Label, new Point(key.Center.X - key.Label.Width / 2,
                 key.Center.Y - key.Label.Height / 2 + offset));
+            dc.Pop();
         }
         private static void DrawPressed(DrawingContext dc, Key key, double amount)
         {
             double width = key.Width * 0.88;
-            double height = 10.0;
+            double height = 10.0 * 88 / 102;
             Rect face = new Rect(key.Center.X - width / 2, key.Center.Y - height / 2 + amount, width, height);
             dc.PushOpacity(amount);
             dc.DrawRoundedRectangle(PressGlow, PressLine, face, 2.5, 2.5);
