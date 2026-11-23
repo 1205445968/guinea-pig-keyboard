@@ -1,0 +1,76 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build
+        shell: pwsh
+        run: ./build.ps1
+      - name: Upload executable
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: WheekKeys
+          path: dist/WheekKeys.exe
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: WheekKeys
+          path: dist
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseJson = gh release view $env:RELEASE_TAG --json isDraft,assets 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:RELEASE_TAG --draft --verify-tag --title "豚鼠键盘 $env:RELEASE_TAG" --notes '下载下方 WheekKeys.exe，在 Windows 10 或 Windows 11 上双击启动。需要 .NET Framework 4.8。'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create draft release.' }
+            $releaseJson = gh release view $env:RELEASE_TAG --json isDraft,assets
+            if ($LASTEXITCODE -ne 0) { throw 'Could not read draft release.' }
+          }
+          $release = $releaseJson | ConvertFrom-Json
+          if (-not $release.isDraft) { throw 'Release is already published; refusing to modify it.' }
+          $asset = $release.assets | Where-Object { $_.name -eq 'WheekKeys.exe' }
+          if ($asset) {
+            $retryDir = Join-Path $env:RUNNER_TEMP 'release-retry'
+            New-Item -ItemType Directory -Path $retryDir -Force | Out-Null
+            gh release download $env:RELEASE_TAG --pattern WheekKeys.exe --dir $retryDir
+            if ($LASTEXITCODE -ne 0) { throw 'Could not verify existing draft asset.' }
+            $existingHash = (Get-FileHash (Join-Path $retryDir 'WheekKeys.exe')).Hash
+            $buildHash = (Get-FileHash 'dist/WheekKeys.exe').Hash
+            if ($existingHash -ne $buildHash) { throw 'Draft asset differs from this build; refusing to overwrite it.' }
+          } else {
+            gh release upload $env:RELEASE_TAG dist/WheekKeys.exe
+            if ($LASTEXITCODE -ne 0) { throw 'Could not upload release asset.' }
+          }
+          gh release edit $env:RELEASE_TAG --draft=false
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish release.' }
