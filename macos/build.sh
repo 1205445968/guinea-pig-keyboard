@@ -30,6 +30,6 @@ lipo -create "$work/WheekKeys-arm64" "$work/WheekKeys-x86_64" -output "$app/Cont
 chmod 755 "$app/Contents/MacOS/WheekKeys"
 codesign --force --sign - "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
-lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/WheekKeys"
+lipo "$app/Contents/MacOS/WheekKeys" -verify_arch arm64 x86_64
 rm -f dist/WheekKeys-macOS.zip
 ditto -c -k --keepParent "$app" dist/WheekKeys-macOS.zip

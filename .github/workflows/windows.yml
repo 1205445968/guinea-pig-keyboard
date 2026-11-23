@@ -72,7 +72,7 @@ jobs:
           ditto -x -k WheekKeys-macOS.zip unpacked
           app=unpacked/WheekKeys.app
           test -x "$app/Contents/MacOS/WheekKeys"
-          lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/WheekKeys"
+          lipo "$app/Contents/MacOS/WheekKeys" -verify_arch arm64 x86_64
           codesign --verify --deep --strict --verbose=2 "$app"
           "$app/Contents/MacOS/WheekKeys" --smoke-test macos-frame.png
       - name: Save rendered Mac preview
