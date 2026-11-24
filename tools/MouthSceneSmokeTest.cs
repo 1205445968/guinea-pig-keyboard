@@ -37,6 +37,16 @@ internal static class MouthSceneSmokeTest
     {
         int changed = 0; for (int i = 0; i < a.Length; i++) if (a[i] != b[i]) changed++; return changed;
     }
+    private static int PinkPixels(byte[] pixels, int width, Rect region)
+    {
+        int count = 0;
+        for (int i = 0; i < pixels.Length; i += 4)
+        {
+            int x = (i / 4) % width, y = i / 4 / width;
+            if (region.Contains(new Point(x, y)) && pixels[i + 3] != 0 && pixels[i + 2] == 237 && pixels[i + 1] == 160 && pixels[i] == 140) count++;
+        }
+        return count;
+    }
     [STAThread]
     private static int Main(string[] args)
     {
@@ -54,10 +64,22 @@ internal static class MouthSceneSmokeTest
                 int changed = Differences(resting, smacking);
                 object art = Field(Field(renderer, "Eyes"), "_mouth");
                 byte[][] raw = (byte[][])art.GetType().GetField("Pixels").GetValue(art);
-                Check(Frame(scene) == 3 && changed > 0, id + " mouth visibly changes (frame " + Frame(scene) + ", pixels " + changed + ", source " + Differences(raw[0], raw[3]) + ")");
-                Check(Differences(raw[0], raw[3]) > 0, id + " source mouth pixels move");
                 int sourceWidth = ((BitmapSource[])art.GetType().GetField("Frames").GetValue(art))[0].PixelWidth;
                 Rect sourceRegion = (Rect)Field(art, "region");
+                Check(PinkPixels(raw[0], sourceWidth, sourceRegion) > 0, id + " open mouth has visible pink tongue");
+                int restingPink = PinkPixels(raw[0], sourceWidth, sourceRegion);
+                bool closes = false;
+                for (int frame = 1; frame < raw.Length; frame++) if (PinkPixels(raw[frame], sourceWidth, sourceRegion) < restingPink) closes = true;
+                Check(closes, id + " mouth animation closes between frames");
+                object eyeArt = Field(renderer, "Eyes");
+                BitmapSource[] eyeFrames = (BitmapSource[])eyeArt.GetType().GetField("_eyes", Private).GetValue(eyeArt);
+                byte[] eyePixels = new byte[eyeFrames[0].PixelWidth * eyeFrames[0].PixelHeight * 4];
+                new FormatConvertedBitmap(eyeFrames[0], PixelFormats.Pbgra32, null, 0).CopyPixels(eyePixels, eyeFrames[0].PixelWidth * 4, 0);
+                HashSet<string> eyeColors = new HashSet<string>();
+                for (int i = 0; i < eyePixels.Length; i += 4) if (eyePixels[i + 3] != 0) eyeColors.Add(eyePixels[i] + "," + eyePixels[i + 1] + "," + eyePixels[i + 2]);
+                Check(eyeColors.Count == 1, id + " open eye uses one visible color");
+                Check(Frame(scene) == 3 && changed > 0, id + " mouth visibly changes (frame " + Frame(scene) + ", pixels " + changed + ", source " + Differences(raw[0], raw[3]) + ")");
+                Check(Differences(raw[0], raw[3]) > 0, id + " source mouth pixels move");
                 for (int i = 0; i < raw[0].Length; i += 4)
                 {
                     Check(raw[0][i + 3] == raw[3][i + 3], id + " source alpha preserved");
