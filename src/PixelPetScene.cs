@@ -48,15 +48,14 @@ namespace WheekKeys
         private Point mousePosition = new Point(31, 243);
         private Point mouseDestination = new Point(31, 243);
         private double lastFrame;
-        private double lastInput;
-        private double mouthStarted = double.NegativeInfinity;
-        private DozeFrame doze;
         private double lastMouseUse = double.NegativeInfinity;
         private double lastClick = double.NegativeInfinity;
         private double lastScroll = double.NegativeInfinity;
         private int scrollDirection;
         private double mouseGrip;
         private bool rightButton;
+        private bool settlingMouse, pendingMouseClick;
+        private double slowMouseUntil = double.NegativeInfinity;
         private bool showKeyLabels = true;
         private Rect bodyBounds = new Rect(126, 39, 174, 181);
         private Vector gazeOffset;
@@ -64,6 +63,9 @@ namespace WheekKeys
         private double nextBlink;
         private double blinkStarted = double.NegativeInfinity;
         private int blinkFrame;
+        private readonly IdleSleepAnimation sleep = new IdleSleepAnimation();
+        private readonly MouthAnimation mouth = new MouthAnimation();
+        private bool sleepVisualActive;
 
         internal Point HeadTop { get { return new Point(bodyBounds.Left + bodyBounds.Width / 2 + SceneOffsetX, bodyBounds.Top - 8); } }
         internal event Action HeadPositionChanged;
@@ -93,7 +95,7 @@ namespace WheekKeys
                 right.Expire(now);
                 AdvanceMouse(now);
                 if (!left.Active && !right.Active && mouseGrip == 0 && mousePosition == mouseDestination
-                    && now - lastMouseUse > 250) animation.Stop();
+                    && now - lastMouseUse > 250 && !settlingMouse && !pendingMouseClick) animation.Stop();
                 InvalidateVisual();
             };
             gaze = new DispatcherTimer(DispatcherPriority.Background);
@@ -103,9 +105,10 @@ namespace WheekKeys
             {
                 blinkStarted = double.NegativeInfinity;
                 blinkFrame = 0;
-                lastInput = clock.Elapsed.TotalMilliseconds;
-                doze = null;
-                ScheduleBlink(lastInput);
+                double now = clock.Elapsed.TotalMilliseconds;
+                sleep.RecordActivity(now);
+                mouth.Reset(now);
+                ScheduleBlink(now);
                 UpdateGaze();
                 gaze.Start();
             };
@@ -113,6 +116,8 @@ namespace WheekKeys
             {
                 animation.Stop();
                 gaze.Stop();
+                settlingMouse = pendingMouseClick = false;
+                slowMouseUntil = double.NegativeInfinity;
                 blinkFrame = 0;
                 blinkStarted = double.NegativeInfinity;
             };
@@ -125,33 +130,33 @@ namespace WheekKeys
 
         private void AdvanceFace(double now)
         {
-            // Remote peers only send key presses and clicks, so their idle time is unknown.
-            DozeFrame frame = followCursor ? DozeFrame.At(now - lastInput) : null;
-            if (frame != doze)
+            if (mouth.Advance(now, sleep.IsWaking(now))) InvalidateVisual();
+            bool active = sleep.Progress(now) > 0 || sleep.IsWaking(now);
+            if (active)
             {
-                doze = frame;
+                gazeOffset = new Vector();
+                AdvanceHead();
                 InvalidateVisual();
             }
-            if (doze == null)
+            else
             {
-                UpdateGaze();
-                AdvanceBlink(now);
+                UpdateGaze(); AdvanceHead(); AdvanceBlink(now);
+                if (sleepVisualActive) InvalidateVisual();
             }
-            else gazeOffset = new Vector();
-            AdvanceHead();
+            sleepVisualActive = active;
         }
 
-        private void NoteInput(double now, bool twitch)
+        private void RecordActivity()
         {
-            lastInput = now;
-            if (doze != null)
-            {
-                doze = null;
-                blinkStarted = double.NegativeInfinity;
-                blinkFrame = 0;
-                ScheduleBlink(now);
-            }
-            if (twitch && now - mouthStarted >= 270) mouthStarted = now;
+            double now = clock.Elapsed.TotalMilliseconds;
+            bool drowsy = sleep.Progress(now) > 0;
+            sleep.RecordActivity(now);
+            if (!drowsy) return;
+            mouth.Reset(now);
+            blinkStarted = double.NegativeInfinity;
+            blinkFrame = 0;
+            ScheduleBlink(now);
+            InvalidateVisual();
         }
 
         private void AdvanceBlink(double now)
@@ -191,7 +196,7 @@ namespace WheekKeys
         {
             Vector delta = gazeOffset - headOffset;
             if (delta.LengthSquared == 0) return;
-            headOffset += delta * 0.35;
+            headOffset += delta * (0.08 + 0.27 * sleep.MotionReadiness(clock.Elapsed.TotalMilliseconds));
             if (delta.LengthSquared < 0.0025) headOffset = gazeOffset;
             InvalidateVisual();
         }
@@ -227,6 +232,10 @@ namespace WheekKeys
                 ForelegFill = fill;
                 ForelegEdge = edge;
                 skin = value;
+                mouth.Reset(clock.Elapsed.TotalMilliseconds);
+                settlingMouse = pendingMouseClick = false;
+                slowMouseUntil = double.NegativeInfinity;
+                RecordActivity();
                 InvalidateVisual();
             }
         }
@@ -251,15 +260,17 @@ namespace WheekKeys
 
         public void PressKey(int scan)
         {
+            RecordActivity();
             bool onRight = PixelKeyboardArt.IsRight(scan);
             Stroke hand = onRight ? left : right;
             double now = clock.Elapsed.TotalMilliseconds;
-            NoteInput(now, true);
             Point start = hand.Position(now);
             if (onRight)
             {
                 start = MouseHand(start, now);
                 mouseGrip = 0;
+                settlingMouse = pendingMouseClick = false;
+                slowMouseUntil = double.NegativeInfinity;
                 lastMouseUse = double.NegativeInfinity;
                 lastClick = double.NegativeInfinity;
                 lastScroll = double.NegativeInfinity;
@@ -271,27 +282,41 @@ namespace WheekKeys
         public void MoveMouse(double dx, double dy)
         {
             if (dx == 0 && dy == 0) return;
+            RecordActivity();
             mouseDestination.X = Math.Max(10, Math.Min(46, mouseDestination.X + dx * 0.12));
             mouseDestination.Y = Math.Max(210, Math.Min(270, mouseDestination.Y + dy * 0.12));
             lastMouseUse = clock.Elapsed.TotalMilliseconds;
-            NoteInput(lastMouseUse, false);
+            double readiness = sleep.MotionReadiness(lastMouseUse);
+            if (readiness < 0.999) slowMouseUntil = Math.Max(slowMouseUntil, lastMouseUse + 2400 * (1 - readiness));
+            settlingMouse |= readiness < 0.999 && mouseGrip < 0.9;
             if (!animation.IsEnabled) Wake();
         }
 
         public void ClickMouse(bool isRightButton)
         {
+            RecordActivity();
             rightButton = isRightButton;
-            lastMouseUse = lastClick = clock.Elapsed.TotalMilliseconds;
-            NoteInput(lastClick, true);
+            lastMouseUse = clock.Elapsed.TotalMilliseconds;
+            double readiness = sleep.MotionReadiness(lastMouseUse);
+            if (readiness < 0.999) slowMouseUntil = Math.Max(slowMouseUntil, lastMouseUse + 2400 * (1 - readiness));
+            if (readiness < 0.999 && mouseGrip < 0.9)
+            {
+                settlingMouse = pendingMouseClick = true;
+                lastClick = double.NegativeInfinity;
+            }
+            else { pendingMouseClick = false; lastClick = lastMouseUse; }
             Wake();
         }
 
         public void ScrollMouse(int delta)
         {
             if (delta == 0) return;
+            RecordActivity();
             scrollDirection = Math.Sign(delta);
             lastMouseUse = lastScroll = clock.Elapsed.TotalMilliseconds;
-            NoteInput(lastScroll, false);
+            double readiness = sleep.MotionReadiness(lastMouseUse);
+            if (readiness < 0.999) slowMouseUntil = Math.Max(slowMouseUntil, lastMouseUse + 2400 * (1 - readiness));
+            settlingMouse |= readiness < 0.999 && mouseGrip < 0.9;
             Wake();
         }
 
@@ -309,14 +334,23 @@ namespace WheekKeys
         {
             double elapsed = Math.Max(0, now - lastFrame);
             lastFrame = now;
-            mousePosition += (mouseDestination - mousePosition) * (1 - Math.Exp(-elapsed / 32));
+            double readiness = sleep.MotionReadiness(now);
+            mousePosition += (mouseDestination - mousePosition) * (1 - Math.Exp(-elapsed * readiness / (32 + (1 - readiness) * 170)));
             if ((mouseDestination - mousePosition).LengthSquared < 0.01) mousePosition = mouseDestination;
 
             bool tapping = left.Active && now - left.Started < 130 && left.Started > Math.Max(lastClick, lastScroll);
-            double gripTarget = !tapping && now - lastMouseUse <= 250 ? 1 : 0;
-            double ease = 1 - Math.Exp(-elapsed / (gripTarget > mouseGrip ? 30 : 53));
+            double gripTarget = !tapping && (now - lastMouseUse <= 250 || settlingMouse || pendingMouseClick) ? 1 : 0;
+            double release = Math.Max(0, Math.Min(1, (slowMouseUntil - now) / 600));
+            double duration = gripTarget > mouseGrip ? 30 + (1 - readiness) * 350 : 53 + (1 - readiness) * 180 + release * 220;
+            double ease = 1 - Math.Exp(-elapsed * readiness / duration);
             mouseGrip += (gripTarget - mouseGrip) * ease;
             if (Math.Abs(gripTarget - mouseGrip) < 0.004) mouseGrip = gripTarget;
+            if (mouseGrip >= 0.9 && (settlingMouse || pendingMouseClick))
+            {
+                if (pendingMouseClick) lastClick = now;
+                settlingMouse = pendingMouseClick = false;
+                lastMouseUse = now;
+            }
         }
 
         private Point MouseButtonPoint()
@@ -437,21 +471,23 @@ namespace WheekKeys
             lp = FollowBody(lp, lean, dip, left.BodyAttachment(now) * (1 - mouseReach));
             rp = FollowBody(rp, lean, dip, right.BodyAttachment(now));
 
-            double nod = doze == null ? 0 : doze.Nod * 2;
-            Rect nextBody = new Rect(126 + lean, 39 + dip + nod, 174, 181 - nod);
+            Vector startle = sleep.StartleOffset(now);
+            startle = new Vector(Math.Round(startle.X), Math.Round(startle.Y));
+            lp = new Point(Math.Round(lp.X + startle.X * 0.55), Math.Round(lp.Y + startle.Y * 0.55));
+            rp = new Point(Math.Round(rp.X + startle.X * 0.55), Math.Round(rp.Y + startle.Y * 0.55));
+            Rect nextBody = new Rect(126 + lean + startle.X, 39 + dip + startle.Y, 174, 181);
             if (nextBody != bodyBounds)
             {
                 bodyBounds = nextBody;
                 if (HeadPositionChanged != null) HeadPositionChanged();
             }
             dc.PushTransform(new TranslateTransform(SceneOffsetX, 0));
-            int mouth = doze == null ? (now - mouthStarted < 145 ? 1 : 0) : doze.Mouth;
-            Eyes.Draw(dc, bodyBounds, headOffset, doze == null ? blinkFrame : doze.Eyes, mouth);
+            Eyes.Draw(dc, bodyBounds, headOffset, sleep.IsWaking(now) ? 0 : blinkFrame, sleep.Expression(now), sleep.EyeScale(now), mouth.Frame);
             DrawMouse(dc, click);
             PixelKeyboardArt.Draw(dc, right.Scan, r, left.Scan, l);
             // Both forelegs start on the visible chest and pass in front of the desk.
-            DrawForeleg(dc, left.Rest, lp, lean, dip);
-            DrawForeleg(dc, right.Rest, rp, lean, dip);
+            DrawForeleg(dc, left.Rest, lp, lean + startle.X, dip + startle.Y);
+            DrawForeleg(dc, right.Rest, rp, lean + startle.X, dip + startle.Y);
             DrawPaw(dc, lp, false);
             DrawPaw(dc, rp, true);
             if (showKeyLabels)
@@ -459,6 +495,7 @@ namespace WheekKeys
                 DrawBubble(dc, left, now, false);
                 DrawBubble(dc, right, now, true);
             }
+            sleep.Draw(dc, new Point(bodyBounds.Right + 5, bodyBounds.Top + 32), now, true);
             dc.Pop();
         }
 

@@ -20,12 +20,13 @@ namespace WheekKeys
         private const byte BackgroundG = 250;
         private const byte BackgroundB = 241;
         private readonly BitmapSource[] _eyes;
+        private readonly BitmapSource[] _sleepEyes;
         private readonly int _sourceWidth;
         private readonly int _sourceHeight;
-        private static readonly BitmapSource[] Mouths = { PixelPetScene.Sprite("mouth-peep.png"), PixelPetScene.Sprite("mouth-yawn.png") };
-        private readonly byte[][] _bodies = new byte[3][];
+        private readonly byte[] _bodyPixels;
+        private readonly MouthArt _mouth;
         private readonly double[] _faceWeights;
-        private readonly BitmapSource[] _headFrames = new BitmapSource[3];
+        private readonly BitmapSource[] _headFrames = new BitmapSource[4];
         private Vector _headDirection;
 
         public BitmapSource Body { get; private set; }
@@ -47,6 +48,7 @@ namespace WheekKeys
                 CreateEye(new[] { "......", "......", ".####.", "######", ".####.", "......" }, eyeColor),
                 CreateEye(new[] { "......", "......", "#....#", "##..##", ".####.", "......" }, eyeColor)
             };
+            _sleepEyes = IdleSleepAnimation.BlendEyes(_eyes[0], _eyes[1]);
             if (clearEyes)
             {
                 ClearEye(body, stride, LeftX, EyeY);
@@ -55,27 +57,10 @@ namespace WheekKeys
             Body = BitmapSource.Create(_sourceWidth, _sourceHeight, source.DpiX, source.DpiY,
                 PixelFormats.Bgra32, null, body, stride);
             Body.Freeze();
-            _bodies[0] = new byte[body.Length];
-            new FormatConvertedBitmap(Body, PixelFormats.Pbgra32, null, 0).CopyPixels(_bodies[0], stride, 0);
+            _bodyPixels = new byte[body.Length];
+            new FormatConvertedBitmap(Body, PixelFormats.Pbgra32, null, 0).CopyPixels(_bodyPixels, stride, 0);
+            _mouth = new MouthArt(Body, true);
             _faceWeights = CreateFaceWeights();
-        }
-
-        private byte[] MouthBody(int frame)
-        {
-            if (_bodies[frame] != null) return _bodies[frame];
-            BitmapSource mouth = Mouths[frame - 1];
-            int stride = mouth.PixelWidth * 4;
-            byte[] patch = new byte[stride * mouth.PixelHeight];
-            new FormatConvertedBitmap(mouth, PixelFormats.Pbgra32, null, 0).CopyPixels(patch, stride, 0);
-            byte[] body = (byte[])_bodies[0].Clone();
-            for (int y = 0; y < mouth.PixelHeight; y++)
-                for (int x = 0; x < mouth.PixelWidth; x++)
-                {
-                    int i = y * stride + x * 4;
-                    if (patch[i + 3] == 255)
-                        Buffer.BlockCopy(patch, i, body, ((49 + y) * _sourceWidth + 45 + x) * 4, 4);
-                }
-            return _bodies[frame] = body;
         }
 
         public Vector Offset(Point cursor, Rect bodyBounds)
@@ -95,17 +80,23 @@ namespace WheekKeys
 
         public void Draw(DrawingContext dc, Rect bodyBounds, Vector head, int blinkFrame, int mouth)
         {
+            Draw(dc, bodyBounds, head, blinkFrame, 0, 1, mouth);
+        }
+
+        public void Draw(DrawingContext dc, Rect bodyBounds, Vector head, int blinkFrame, double drowsiness, double eyeScale, int mouth)
+        {
+            mouth = Math.Max(0, Math.Min(3, mouth));
             if (head != _headDirection)
             {
                 Array.Clear(_headFrames, 0, _headFrames.Length);
                 _headDirection = head;
             }
-            if (_headFrames[mouth] == null) _headFrames[mouth] = CreateHeadFrame(head, MouthBody(mouth));
+            if (_headFrames[mouth] == null) _headFrames[mouth] = CreateHeadFrame(head, _mouth.Pixels[mouth]);
             double sx = bodyBounds.Width / _sourceWidth;
             double sy = bodyBounds.Height / _sourceHeight;
             dc.DrawImage(_headFrames[mouth], new Rect(bodyBounds.X - Padding * sx, bodyBounds.Y - (Padding + BodyLift) * sy,
                 (_sourceWidth + Padding * 2) * sx, (_sourceHeight + Padding * 2 + BodyLift) * sy));
-            DrawEyes(dc, bodyBounds, head, blinkFrame);
+            DrawEyes(dc, bodyBounds, head, blinkFrame, drowsiness, eyeScale);
         }
 
         public void DrawEyes(DrawingContext dc, Rect bounds, Vector head)
@@ -115,12 +106,18 @@ namespace WheekKeys
 
         public void DrawEyes(DrawingContext dc, Rect bounds, Vector head, int blinkFrame)
         {
-            BitmapSource eye = _eyes[Math.Max(0, Math.Min(_eyes.Length - 1, blinkFrame))];
-            dc.DrawImage(eye, EyeBounds(LeftX, bounds, head));
-            dc.DrawImage(eye, EyeBounds(RightX, bounds, head));
+            DrawEyes(dc, bounds, head, blinkFrame, 0, 1);
         }
 
-        private Rect EyeBounds(int x, Rect bounds, Vector head)
+        private void DrawEyes(DrawingContext dc, Rect bounds, Vector head, int blinkFrame, double drowsiness, double eyeScale)
+        {
+            BitmapSource eye = drowsiness > 0 ? _sleepEyes[IdleSleepAnimation.FrameIndex(drowsiness)]
+                : _eyes[Math.Max(0, Math.Min(_eyes.Length - 1, blinkFrame))];
+            dc.DrawImage(eye, EyeBounds(LeftX, bounds, head, eyeScale));
+            dc.DrawImage(eye, EyeBounds(RightX, bounds, head, eyeScale));
+        }
+
+        private Rect EyeBounds(int x, Rect bounds, Vector head, double eyeScale)
         {
             double angle = head.X * TurnRadians;
             Point center = DeformFace(new Point(x + EyeSize / 2.0, EyeY + EyeSize / 2.0),
@@ -129,8 +126,10 @@ namespace WheekKeys
             center = TiltHead(center, head, Math.Cos(tilt), Math.Sin(tilt));
             double sx = bounds.Width / _sourceWidth;
             double sy = bounds.Height / _sourceHeight;
-            return new Rect(bounds.X + Math.Round(center.X - EyeSize / 2.0) * sx,
+            Rect eye = new Rect(bounds.X + Math.Round(center.X - EyeSize / 2.0) * sx,
                 bounds.Y + (Math.Round(center.Y - EyeSize / 2.0) - BodyLift) * sy, EyeSize * sx, EyeSize * sy);
+            eye.Inflate(eye.Width * (eyeScale - 1) / 2, eye.Height * (eyeScale - 1) / 2);
+            return eye;
         }
 
         private static double SmoothWeight(double value)
@@ -146,7 +145,7 @@ namespace WheekKeys
                 for (int x = 0; x < _sourceWidth; x++)
                 {
                     int i = y * _sourceWidth + x;
-                    distance[i] = _bodies[0][i * 4 + 3] == 0 ? 0 : 20;
+                    distance[i] = _bodyPixels[i * 4 + 3] == 0 ? 0 : 20;
                     if (x == 0 || y == 0 || x == _sourceWidth - 1 || y == _sourceHeight - 1)
                         distance[i] = Math.Min(distance[i], 1);
                     if (x > 0) distance[i] = Math.Min(distance[i], distance[i - 1] + 1);
