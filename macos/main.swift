@@ -37,6 +37,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private var eventTap: CFMachPort?
     private var eventSource: CFRunLoopSource?
     private var skinID = "tricolor"
+    private var nickname = ""
     private var scale = 1.0
     private var clickThrough = false
     private var showLabels = true
@@ -54,6 +55,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         skinID = PetSkin.named(defaults.string(forKey: "skin") ?? "tricolor").id
+        nickname = LocalPeers.normalizedNickname(defaults.string(forKey: "nickname") ?? "") ?? ""
         let savedScale = defaults.double(forKey: "scale")
         scale = savedScale > 0 ? min(2.0, max(0.5, savedScale)) : 1.0
         clickThrough = defaults.bool(forKey: "clickThrough")
@@ -99,6 +101,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             guard let self = self else { return ("tricolor", 0, 0) }
             return (self.skinID, self.keyCount, self.clickCount)
         }
+
+        peers.nickname = { [weak self] in self?.nickname ?? "" }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let url = Bundle.main.url(forResource: "avatar", withExtension: "png"),
@@ -240,6 +244,24 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 } else { self.peers.stop() }
                 self.refreshSettings()
             }
+            created.onSaveNickname = { [weak self] value in
+                guard let self = self, let normalized = LocalPeers.normalizedNickname(value) else { return false }
+                self.nickname = normalized
+                self.defaults.set(normalized, forKey: "nickname")
+                self.refreshSettings()
+                return true
+            }
+            created.onCreateRoom = { [weak self] in
+                guard let self = self else { return }
+                _ = self.peers.startRoom(RoomTransport.createCode())
+                self.refreshSettings()
+            }
+            created.onJoinRoom = { [weak self] code in
+                guard let self = self else { return }
+                if !self.peers.startRoom(code) { self.settingsController?.setNetworkError("房间码无效，请检查后重试") }
+                self.refreshSettings()
+            }
+            created.onExitRoom = { [weak self] in self?.peers.stop(); self?.refreshSettings() }
             created.onReturnToCorner = { [weak self] in self?.returnToCorner() }
             created.onQuit = { [weak self] in self?.quit() }
             created.onClose = { [weak self] in self?.settingsPopover?.performClose(nil) }
@@ -260,12 +282,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
     }
     private func refreshSettings() {
-        let rows = peers.peers.sorted { $0.key < $1.key }.map { id, peer in
-            "\(PetSkin.named(peer.skin).name) · \(id.prefix(4))　按键 \(peer.keys)　点击 \(peer.clicks)"
-        }
+        let rows = peers.peers.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
         settingsController?.refresh(skinID: skinID, scale: scale, showLabels: showLabels, clickThrough: clickThrough,
                                     hideForSogou: hideForSogou, networking: peers.active,
-                                    keys: keyCount, clicks: clickCount, peers: rows, networkStatus: peers.status)
+                                    keys: keyCount, clicks: clickCount, peers: rows, networkStatus: peers.status,
+                                    roomCode: peers.roomCode, roomConnected: peers.roomConnected, nickname: nickname)
     }
     private func returnToCorner() {
         let screen = window.screen ?? NSScreen.main ?? NSScreen.screens[0]

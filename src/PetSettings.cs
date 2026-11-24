@@ -15,7 +15,7 @@ using System.Windows.Shapes;
 
 namespace WheekKeys
 {
-    internal sealed class PetSettings : Window
+    internal sealed partial class PetSettings : Window
     {
         private static readonly Brush Paper = BrushFrom(252, 248, 238);
         private static readonly Brush Paper2 = BrushFrom(243, 236, 218);
@@ -31,18 +31,14 @@ namespace WheekKeys
         private readonly PetWindow owner;
         private readonly Dictionary<string, Button> skinButtons = new Dictionary<string, Button>();
         private readonly TextBlock sizeValue;
-        private readonly TextBlock localTotals = new TextBlock { Foreground = Ink, FontSize = 12, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap };
-        private readonly TextBlock peerSummary = new TextBlock { Foreground = Muted, FontSize = 11, TextWrapping = TextWrapping.Wrap };
-        private readonly ToggleButton networkSwitch;
-        private bool refreshingActivity;
         private bool closing;
 
         public PetSettings(PetWindow owner)
         {
             this.owner = owner;
             Title = "豚鼠键盘设置";
-            Width = 286;
-            Height = 528;
+            Width = 340;
+            Height = 446;
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
             Background = Brushes.Transparent;
@@ -55,6 +51,7 @@ namespace WheekKeys
             SnapsToDevicePixels = true;
 
             Grid layout = new Grid();
+            layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -104,24 +101,18 @@ namespace WheekKeys
             toggles.Children.Add(BuildToggleRow("使用搜狗输入法时自动隐藏", sogou));
             body.Children.Add(toggles);
 
-            StackPanel activity = BuildSection("计数与联机");
-            activity.Children.Add(localTotals);
-            networkSwitch = MakeSwitch(owner.Networking, delegate(bool enabled)
-            {
-                if (refreshingActivity) return;
-                owner.SetNetworking(enabled);
-                RefreshActivity();
-            });
-            AutomationProperties.SetName(networkSwitch, "局域网联机");
-            activity.Children.Add(BuildToggleRow("局域网联机", networkSwitch));
-            activity.Children.Add(peerSummary);
-            body.Children.Add(activity);
-            ScrollViewer scroll = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-            Grid.SetRow(scroll, 1);
-            layout.Children.Add(scroll);
+            ScrollViewer petPage = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            networkPage = BuildNetworkPage();
+            Grid.SetRow(petPage, 2);
+            Grid.SetRow(networkPage, 2);
+            layout.Children.Add(petPage);
+            layout.Children.Add(networkPage);
+            Border tabs = BuildTabs(petPage, networkPage);
+            Grid.SetRow(tabs, 1);
+            layout.Children.Add(tabs);
 
             Grid footer = BuildFooter();
-            Grid.SetRow(footer, 2);
+            Grid.SetRow(footer, 3);
             layout.Children.Add(footer);
 
             Border shell = new Border
@@ -139,23 +130,52 @@ namespace WheekKeys
 
             PreviewKeyDown += delegate(object sender, KeyEventArgs e)
             {
-                if (e.Key == Key.Escape) { Close(); e.Handled = true; }
+                if (e.Key == Key.Escape)
+                {
+                    if (nameEditor.IsVisible) CancelRename();
+                    else Close();
+                    e.Handled = true;
+                }
             };
             Closing += delegate { closing = true; };
             Deactivated += delegate { if (!closing) Close(); };
             Closed += delegate { owner.SettingsClosed(this); };
             RefreshState();
-            RefreshActivity();
         }
 
-        internal void RefreshActivity()
+        private Border BuildTabs(UIElement petPage, UIElement lanPage)
         {
-            refreshingActivity = true;
-            networkSwitch.IsChecked = owner.Networking;
-            refreshingActivity = false;
-            localTotals.Text = owner.LocalTotals;
-            string summary = owner.PeerSummary;
-            peerSummary.Text = summary.Length == 0 ? "开启后，同一局域网的伙伴可以看到你的毛色和累计次数。" : summary;
+            UniformGrid tabs = new UniformGrid { Rows = 1, Columns = 2 };
+            RadioButton petTab = PageTab("桌宠", petPage);
+            tabs.Children.Add(petTab);
+            tabs.Children.Add(PageTab("联机", lanPage));
+            petTab.IsChecked = true;
+            return new Border { Background = Paper2, Padding = new Thickness(3), CornerRadius = new CornerRadius(10),
+                Margin = new Thickness(0, 7, 0, 8), Child = tabs };
+        }
+
+        private RadioButton PageTab(string name, UIElement page)
+        {
+            RadioButton tab = new RadioButton { Content = name, Template = ButtonTemplate, Height = 26,
+                FontSize = 12, Foreground = Muted, Background = Brushes.Transparent, BorderThickness = new Thickness(0),
+                HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center,
+                Cursor = Cursors.Hand, GroupName = "settingsPages" };
+            AutomationProperties.SetName(tab, name);
+            page.Visibility = Visibility.Collapsed;
+            tab.Checked += delegate {
+                tab.Background = Paper;
+                tab.Foreground = Ink;
+                tab.FontWeight = FontWeights.SemiBold;
+                page.Visibility = Visibility.Visible;
+                RefreshActivity();
+            };
+            tab.Unchecked += delegate {
+                tab.Background = Brushes.Transparent;
+                tab.Foreground = Muted;
+                tab.FontWeight = FontWeights.Normal;
+                page.Visibility = Visibility.Collapsed;
+            };
+            return tab;
         }
 
         internal void PlaceAt(double left, double top)
@@ -373,7 +393,7 @@ namespace WheekKeys
             content.SetValue(ContentPresenter.VerticalAlignmentProperty, new TemplateBindingExtension(Control.VerticalContentAlignmentProperty));
             content.SetValue(FrameworkElement.MarginProperty, new TemplateBindingExtension(Control.PaddingProperty));
             face.AppendChild(content);
-            ControlTemplate template = new ControlTemplate(typeof(Button)) { VisualTree = face };
+            ControlTemplate template = new ControlTemplate(typeof(ButtonBase)) { VisualTree = face };
             Trigger pressed = new Trigger { Property = ButtonBase.IsPressedProperty, Value = true };
             pressed.Setters.Add(new Setter(UIElement.OpacityProperty, 0.82, "Face"));
             template.Triggers.Add(pressed);

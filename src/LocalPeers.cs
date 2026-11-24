@@ -16,26 +16,32 @@ namespace WheekKeys
         private readonly byte[] buffer = new byte[129];
         private readonly List<IPEndPoint> targets = new List<IPEndPoint>();
         private Socket socket;
+        private RoomTransport room;
         private readonly string session = Guid.NewGuid().ToString("N");
         private double nextSend, nextInterfaceCheck;
         private string problem;
 
-        private sealed class Peer
+        internal sealed class Peer
         {
-            public string Label;
+            public PetSkin Skin;
+            public long Keys, Clicks;
             public double Seen;
+            public string Nickname = "";
         }
 
-        public bool Enabled { get { return socket != null; } }
-        public string Summary
+        public bool Enabled { get { return socket != null || room != null; } }
+        public string RoomCode { get; private set; }
+        public bool RoomConnected { get { return room != null && room.Connected; } }
+        public string RoomStatus { get { return room == null ? null : room.Status; } }
+        public string Problem { get { return problem; } }
+        public IReadOnlyDictionary<string, Peer> Members { get { return peers; } }
+
+        public void EnterRoom(string code)
         {
-            get
-            {
-                if (!string.IsNullOrEmpty(problem)) return problem;
-                if (!Enabled) return "";
-                if (peers.Count == 0) return "等待局域网伙伴…";
-                return string.Join("\n", peers.Values.Select(p => p.Label));
-            }
+            Dispose();
+            room = new RoomTransport(code);
+            RoomCode = code;
+            nextSend = 0;
         }
 
         public void Start()
@@ -56,6 +62,9 @@ namespace WheekKeys
 
         public void Dispose()
         {
+            if (room != null) room.Dispose();
+            room = null;
+            RoomCode = null;
             if (socket != null) socket.Close();
             socket = null;
             peers.Clear();
@@ -70,38 +79,45 @@ namespace WheekKeys
                 ? "联机端口已占用，请稍后重试" : "局域网连接失败，请重新开启";
         }
 
-        public void Tick(double now, PetSkin skin, long keys, long clicks)
+        public void Tick(double now, PetSkin skin, long keys, long clicks, string nickname)
         {
             if (!Enabled) return;
+            double timeout = room == null ? 8 : 20;
+            foreach (string id in peers.Where(p => now - p.Value.Seen >= timeout).Select(p => p.Key).ToArray())
+                peers.Remove(id);
+            if (room != null && !room.Connected)
+            {
+                peers.Clear();
+                nextSend = 0;
+                return;
+            }
             if (now >= nextSend)
             {
-                if (now >= nextInterfaceCheck)
+                string message = string.Format(CultureInfo.InvariantCulture, "WK1|{0}|{1}|{2}|{3}", session, skin.Id, keys, clicks);
+                if (room == null) Broadcast(now, message);
+                else room.Publish(message);
+                string normalized;
+                if (PetName.TryNormalize(nickname, out normalized) && normalized == nickname)
                 {
-                    FindBroadcastTargets();
-                    nextInterfaceCheck = now + 10;
+                    string nameMessage = "WN1|" + session + "|" + PetName.Encode(nickname);
+                    if (room == null) Broadcast(now, nameMessage);
+                    else room.Publish(nameMessage);
                 }
-                byte[] packet = Encoding.ASCII.GetBytes(string.Format(CultureInfo.InvariantCulture,
-                    "WK1|{0}|{1}|{2}|{3}", session, skin.Id, keys, clicks));
-                bool sent = false;
-                foreach (IPEndPoint target in targets)
-                {
-                    try { socket.SendTo(packet, target); sent = true; }
-                    catch (SocketException) { }
-                }
-                problem = sent ? null : "等待可用的局域网连接…";
-                nextSend = now + 2;
+                nextSend = now + (room == null ? 2 : 5);
             }
-
-            foreach (string id in peers.Where(p => now - p.Value.Seen >= 8).Select(p => p.Key).ToArray())
-                peers.Remove(id);
-            // Bound work on the UI thread even if the socket is continuously readable.
+            if (room != null)
+            {
+                string message;
+                for (int i = 0; i < 32 && room.TryReceive(out message); i++) ReadPeer(message, now);
+                return;
+            }
             for (int i = 0; i < 32; i++)
             {
                 try
                 {
                     if (!socket.Poll(0, SelectMode.SelectRead)) break;
                     int size = socket.Receive(buffer);
-                    if (size <= 128) ReadPeer(size, now);
+                    if (size <= 128) ReadPeer(Encoding.ASCII.GetString(buffer, 0, size), now);
                 }
                 catch (SocketException e)
                 {
@@ -110,6 +126,23 @@ namespace WheekKeys
                     break;
                 }
             }
+        }
+
+        private void Broadcast(double now, string message)
+        {
+            if (now >= nextInterfaceCheck)
+            {
+                FindBroadcastTargets();
+                nextInterfaceCheck = now + 10;
+            }
+            byte[] packet = Encoding.ASCII.GetBytes(message);
+            bool sent = false;
+            foreach (IPEndPoint target in targets)
+            {
+                try { socket.SendTo(packet, target); sent = true; }
+                catch (SocketException) { }
+            }
+            problem = sent ? null : "等待可用的局域网连接…";
         }
 
         private void FindBroadcastTargets()
@@ -135,12 +168,23 @@ namespace WheekKeys
             catch (NetworkInformationException) { }
         }
 
-        private void ReadPeer(int size, double now)
+        private void ReadPeer(string message, double now)
         {
-            string[] fields = Encoding.ASCII.GetString(buffer, 0, size).Split('|');
+            if (message.Length > 128) return;
+            string[] fields = message.Split('|');
+            if (fields.Length == 3 && fields[0] == "WN1")
+            {
+                string nameId = fields[1];
+                string name;
+                Peer existing;
+                if (message.Length <= 125 && nameId != session && ValidId(nameId) &&
+                    peers.TryGetValue(nameId, out existing) && PetName.TryDecode(fields[2], out name))
+                    existing.Nickname = name;
+                return;
+            }
             if (fields.Length != 5 || fields[0] != "WK1") return;
             string id = fields[1];
-            if (id == session || id.Length != 32 || !id.All(c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return;
+            if (id == session || !ValidId(id)) return;
             PetSkin skin = PetSkin.FromId(fields[2]);
             long keys, clicks;
             if (skin.Id != fields[2] || !TryCount(fields[3], out keys) || !TryCount(fields[4], out clicks)) return;
@@ -151,7 +195,14 @@ namespace WheekKeys
                 peers.Add(id, peer = new Peer());
             }
             peer.Seen = now;
-            peer.Label = string.Format("{0} · {1}　按键 {2}　点击 {3}", skin.Name, id.Substring(0, 4), keys, clicks);
+            peer.Skin = skin;
+            peer.Keys = keys;
+            peer.Clicks = clicks;
+        }
+
+        private static bool ValidId(string id)
+        {
+            return id.Length == 32 && id.All(c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
         }
 
         internal static bool TryCount(string value, out long result)

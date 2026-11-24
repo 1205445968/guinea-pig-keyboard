@@ -16,6 +16,7 @@ using Forms = System.Windows.Forms;
 using Drawing = System.Drawing;
 
 [assembly: AssemblyProduct("WheekKeys")]
+[assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8")]
 [assembly: AssemblyVersion("0.1.4.0")]
 [assembly: AssemblyInformationalVersion("0.1.4")]
 
@@ -62,6 +63,7 @@ namespace WheekKeys
         private readonly DispatcherTimer timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         private readonly Stopwatch clock = Stopwatch.StartNew();
         private long keyCount, clickCount;
+        private string nickname = "";
         private bool countsDirty;
         private double nextSave;
         private bool hideForSogou = true;
@@ -112,7 +114,7 @@ namespace WheekKeys
             {
                 double now = clock.Elapsed.TotalSeconds;
                 UpdateVisibility();
-                peers.Tick(now, scene.Skin, keyCount, clickCount);
+                peers.Tick(now, scene.Skin, keyCount, clickCount, nickname);
                 if (settingsWindow != null) settingsWindow.RefreshActivity();
                 if (countsDirty && now >= nextSave)
                 {
@@ -224,9 +226,30 @@ namespace WheekKeys
         internal bool MouseClickThrough { get { return clickThrough; } }
         internal double PetWidth { get { return Width; } }
         internal bool HideForSogou { get { return hideForSogou; } }
-        internal bool Networking { get { return peers.Enabled; } }
-        internal string PeerSummary { get { return peers.Summary; } }
-        internal string LocalTotals { get { return string.Format("本机累计　按键 {0}　点击 {1}", keyCount, clickCount); } }
+        internal LocalPeers Network { get { return peers; } }
+        internal long KeyCount { get { return keyCount; } }
+        internal long ClickCount { get { return clickCount; } }
+        internal string Nickname { get { return nickname; } }
+
+        internal bool TrySetNickname(string input, out string error)
+        {
+            string normalized;
+            if (!PetName.TryNormalize(input, out normalized))
+            {
+                error = "名字最多 16 个字符，不能包含控制字符";
+                return false;
+            }
+            string previous = nickname;
+            nickname = normalized;
+            if (!SaveSettings())
+            {
+                nickname = previous;
+                error = "保存名字失败，请检查本地设置文件";
+                return false;
+            }
+            error = null;
+            return true;
+        }
 
         internal void SetHideForSogou(bool value)
         {
@@ -240,7 +263,7 @@ namespace WheekKeys
             if (value)
             {
                 peers.Start();
-                peers.Tick(clock.Elapsed.TotalSeconds, scene.Skin, keyCount, clickCount);
+                peers.Tick(clock.Elapsed.TotalSeconds, scene.Skin, keyCount, clickCount, nickname);
             }
             else peers.Dispose();
         }
@@ -378,13 +401,16 @@ namespace WheekKeys
                 if (values.Length > 6 && bool.TryParse(values[6], out hide)) hideForSogou = hide;
                 if (values.Length > 7) LocalPeers.TryCount(values[7], out keyCount);
                 if (values.Length > 8) LocalPeers.TryCount(values[8], out clickCount);
+                string loadedName;
+                if (values.Length > 9 && PetName.TryNormalize(values[9], out loadedName) && loadedName == values[9])
+                    nickname = loadedName;
             }
             catch { MoveToCorner(); }
         }
 
-        private void SaveSettings()
+        private bool SaveSettings()
         {
-            if (!ready) return;
+            if (!ready) return false;
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(settingsPath));
@@ -392,12 +418,13 @@ namespace WheekKeys
                 File.WriteAllLines(pending, new string[] {
                     Left.ToString("R", CultureInfo.InvariantCulture), Top.ToString("R", CultureInfo.InvariantCulture),
                     Width.ToString("R", CultureInfo.InvariantCulture), scene.ShowKeyLabels.ToString(), clickThrough.ToString(), scene.Skin.Id,
-                    hideForSogou.ToString(), keyCount.ToString(CultureInfo.InvariantCulture), clickCount.ToString(CultureInfo.InvariantCulture) });
+                    hideForSogou.ToString(), keyCount.ToString(CultureInfo.InvariantCulture), clickCount.ToString(CultureInfo.InvariantCulture), nickname });
                 if (File.Exists(settingsPath)) File.Replace(pending, settingsPath, null);
                 else File.Move(pending, settingsPath);
                 countsDirty = false;
+                return true;
             }
-            catch { }
+            catch { return false; }
         }
     }
 }

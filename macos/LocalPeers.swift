@@ -7,14 +7,19 @@ final class LocalPeers {
         let keys: UInt64
         let clicks: UInt64
         let seen: TimeInterval
+        var nickname: String = ""
     }
     private(set) var peers: [String: Peer] = [:]
     private(set) var active = false
     private(set) var status = ""
+    private(set) var roomCode: String?
+    var roomConnected: Bool { room?.connected ?? false }
+    private var room: RoomTransport?
     private var socketFD: Int32 = -1
     private var timer: Timer?
     private let session = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     var payload: (() -> (String, UInt64, UInt64))?
+    var nickname: (() -> String)?
     private var lastBroadcast: TimeInterval = 0
 
     func start() -> Bool {
@@ -34,16 +39,36 @@ final class LocalPeers {
         socketFD = fd
         active = true
         lastBroadcast = 0
+        startTimer()
+        return true
+    }
+
+    func startRoom(_ code: String) -> Bool {
+        guard let normalized = RoomTransport.normalizeCode(code) else { return false }
+        stop()
+        roomCode = normalized
+        let transport = RoomTransport(code: normalized)
+        room = transport
+        active = true
+        lastBroadcast = 0
+        transport.start()
+        startTimer()
+        return true
+    }
+
+    private func startTimer() {
         let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in self?.tick() }
         self.timer = timer
         RunLoop.main.add(timer, forMode: .common)
         tick()
-        return true
     }
 
     func stop() {
         timer?.invalidate()
         timer = nil
+        room?.stop()
+        room = nil
+        roomCode = nil
         if socketFD >= 0 { close(socketFD) }
         socketFD = -1
         active = false
@@ -53,6 +78,26 @@ final class LocalPeers {
 
     private func tick() {
         let now = ProcessInfo.processInfo.systemUptime
+        if let room = room {
+            status = room.status
+            guard room.connected else {
+                peers.removeAll()
+                lastBroadcast = 0
+                return
+            }
+            if lastBroadcast == 0 || now - lastBroadcast >= 5 {
+                lastBroadcast = now
+                if let message = packet() {
+                    room.publish(message)
+                    room.publish(nicknamePacket())
+                }
+            }
+            for message in room.drain() {
+                accept(Array(message.utf8), now: now)
+            }
+            peers = Self.unexpired(peers, now: now, expiry: 20)
+            return
+        }
         if now - lastBroadcast >= 2 {
             lastBroadcast = now
             broadcast()
@@ -61,11 +106,58 @@ final class LocalPeers {
         for _ in 0..<32 {
             let count = recv(socketFD, &bytes, bytes.count, 0)
             if count <= 0 { break }
-            guard count <= 128, let parsed = Self.parse(bytes: Array(bytes.prefix(count)), ownID: session, now: now) else { continue }
-            let (id, peer) = parsed
-            if peers[id] != nil || peers.count < 64 { peers[id] = peer }
+            if count <= 128 { accept(Array(bytes.prefix(count)), now: now) }
         }
         peers = Self.unexpired(peers, now: now)
+    }
+
+    private func accept(_ bytes: [UInt8], now: TimeInterval) {
+        Self.apply(bytes: bytes, ownID: session, now: now, peers: &peers)
+    }
+
+    static func normalizedNickname(_ input: String) -> String? {
+        let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        for scalar in value.unicodeScalars {
+            let code = scalar.value
+            if scalar.properties.generalCategory == .control || code == 0x2028 || code == 0x2029 ||
+                code == 0x061C || code == 0x200E || code == 0x200F ||
+                (0x202A...0x202E).contains(code) || (0x2066...0x2069).contains(code) { return nil }
+        }
+        guard value.unicodeScalars.count <= 16, value.utf8.count <= 64 else { return nil }
+        return value
+    }
+
+    static func apply(bytes: [UInt8], ownID: String, now: TimeInterval, peers: inout [String: Peer]) {
+        if let parsed = parse(bytes: bytes, ownID: ownID, now: now) {
+            let (id, received) = parsed
+            guard peers[id] != nil || peers.count < 64 else { return }
+            var peer = received
+            peer.nickname = peers[id]?.nickname ?? ""
+            peers[id] = peer
+            return
+        }
+        guard bytes.count <= 128, let message = String(bytes: bytes, encoding: .ascii) else { return }
+        let fields = message.split(separator: "|", omittingEmptySubsequences: false)
+        guard fields.count == 3, fields[0] == "WN1", fields[1].count == 32,
+              fields[1].utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+              fields[1] != ownID, let data = Data(base64Encoded: String(fields[2])),
+              data.base64EncodedString() == fields[2], let text = String(data: data, encoding: .utf8),
+              let value = normalizedNickname(text), value == text else { return }
+        let id = String(fields[1])
+        guard var peer = peers[id] else { return }
+        peer.nickname = value
+        peers[id] = peer
+    }
+
+    private func nicknamePacket() -> String {
+        let value = Self.normalizedNickname(nickname?() ?? "") ?? ""
+        return "WN1|\(session)|\(Data(value.utf8).base64EncodedString())"
+    }
+
+    private func packet() -> String? {
+        guard let values = payload?() else { return nil }
+        let (skin, keys, clicks) = values
+        return "WK1|\(session)|\(skin)|\(keys)|\(clicks)"
     }
 
     static func parse(bytes: [UInt8], ownID: String, now: TimeInterval) -> (String, Peer)? {
@@ -82,14 +174,13 @@ final class LocalPeers {
         return (String(fields[1]), Peer(skin: String(fields[2]), keys: keys, clicks: clicks, seen: now))
     }
 
-    static func unexpired(_ peers: [String: Peer], now: TimeInterval) -> [String: Peer] {
-        peers.filter { now - $0.value.seen < 8 }
+    static func unexpired(_ peers: [String: Peer], now: TimeInterval, expiry: TimeInterval = 8) -> [String: Peer] {
+        peers.filter { now - $0.value.seen < expiry }
     }
 
     private func broadcast() {
-        guard let values = payload?() else { return }
-        let (skin, keys, clicks) = values
-        guard let data = "WK1|\(session)|\(skin)|\(keys)|\(clicks)".data(using: .ascii) else { return }
+        guard let data = packet()?.data(using: .ascii), let nameData = nicknamePacket().data(using: .ascii) else { return }
+        let messages = [data, nameData]
         var interfaces: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&interfaces) == 0 else { status = "无法读取网络接口"; return }
         defer { freeifaddrs(interfaces) }
@@ -110,12 +201,15 @@ final class LocalPeers {
             destination.sin_family = sa_family_t(AF_INET)
             destination.sin_port = in_port_t(41684).bigEndian
             destination.sin_addr = in_addr(s_addr: ip | ~netmask)
-            let sent = data.withUnsafeBytes { buffer in
-                withUnsafePointer(to: &destination) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    sendto(socketFD, buffer.baseAddress, buffer.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-                } }
+            let allSent = messages.allSatisfy { message in
+                message.withUnsafeBytes { buffer in
+                    let sent = withUnsafePointer(to: &destination) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                        sendto(socketFD, buffer.baseAddress, buffer.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                    } }
+                    return sent == message.count
+                }
             }
-            if sent == data.count { successes += 1 }
+            if allSent { successes += 1 }
         }
         if targets == 0 { status = "没有可广播的 IPv4 网卡" }
         else if successes == 0 { status = "广播发送失败" }
