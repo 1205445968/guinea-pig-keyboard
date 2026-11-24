@@ -16,6 +16,7 @@ namespace WheekKeys
         private const double SettleTime = 285;
         private const double BubbleTime = 395;
         private PetSkin skin;
+        private PixelPetScene pixelScene;
         private BitmapImage body;
         private BitmapImage paw;
         private Brush fur;
@@ -69,11 +70,12 @@ namespace WheekKeys
             };
             blinkTimer.Tick += delegate
             {
+                if (pixelScene != null) { blinkTimer.Stop(); return; }
                 blinkStarted = clock.Elapsed.TotalMilliseconds;
                 ScheduleBlink();
                 Wake();
             };
-            Loaded += delegate { ScheduleBlink(); };
+            Loaded += delegate { if (pixelScene == null) ScheduleBlink(); };
             Unloaded += delegate { blinkTimer.Stop(); animation.Stop(); };
         }
 
@@ -83,6 +85,22 @@ namespace WheekKeys
             set
             {
                 if (value == null || value == skin) return;
+                if (value.PixelCoatId != null)
+                {
+                    if (pixelScene == null)
+                    {
+                        pixelScene = new PixelPetScene();
+                        AddVisualChild(pixelScene);
+                    }
+                    pixelScene.CoatId = value.PixelCoatId;
+                    pixelScene.ShowKeyLabels = showKeyLabels;
+                    blinkTimer.Stop();
+                    animation.Stop();
+                    skin = value;
+                    InvalidateMeasure();
+                    InvalidateVisual();
+                    return;
+                }
                 BitmapImage newBody = Sprite(value.BodyResource);
                 BitmapImage newPaw = Sprite(value.PawResource);
                 BitmapSource[] newEyes = EyeFrames(value.Id);
@@ -91,7 +109,14 @@ namespace WheekKeys
                 paw = newPaw;
                 body = newBody;
                 eyes = newEyes;
+                if (pixelScene != null)
+                {
+                    RemoveVisualChild(pixelScene);
+                    pixelScene = null;
+                    InvalidateMeasure();
+                }
                 skin = value;
+                if (IsLoaded) ScheduleBlink();
                 InvalidateVisual();
             }
         }
@@ -99,11 +124,12 @@ namespace WheekKeys
         public bool ShowKeyLabels
         {
             get { return showKeyLabels; }
-            set { showKeyLabels = value; InvalidateVisual(); }
+            set { showKeyLabels = value; if (pixelScene != null) pixelScene.ShowKeyLabels = value; InvalidateVisual(); }
         }
 
         public void PressKey(int scan)
         {
+            if (pixelScene != null) { pixelScene.PressKey(scan); return; }
             bool onRight = KeyboardArt.IsRight(scan);
             Stroke hand = onRight ? left : right;
             double now = clock.Elapsed.TotalMilliseconds;
@@ -121,6 +147,7 @@ namespace WheekKeys
 
         public void MoveMouse(double dx, double dy)
         {
+            if (pixelScene != null) { pixelScene.MoveMouse(dx, dy); return; }
             if (dx == 0 && dy == 0) return;
             double now = clock.Elapsed.TotalMilliseconds;
             if (now - lastLook > 160) lookMotion = new Vector();
@@ -143,6 +170,7 @@ namespace WheekKeys
 
         public void ClickMouse(bool isRightButton)
         {
+            if (pixelScene != null) { pixelScene.ClickMouse(isRightButton); return; }
             rightButton = isRightButton;
             lastMouseUse = clock.Elapsed.TotalMilliseconds;
             lastClick = lastMouseUse + (1 - mouseGrip) * 110;
@@ -162,6 +190,7 @@ namespace WheekKeys
         private void ScheduleBlink()
         {
             blinkTimer.Stop();
+            if (pixelScene != null) return;
             blinkTimer.Interval = TimeSpan.FromMilliseconds(random.Next(3000, 6001));
             blinkTimer.Start();
         }
@@ -333,6 +362,7 @@ namespace WheekKeys
 
         protected override void OnRender(DrawingContext dc)
         {
+            if (pixelScene != null) return;
             double now = clock.Elapsed.TotalMilliseconds;
             Pose pose = CurrentPose(now);
             double l = left.Contact(now), r = right.Contact(now);
@@ -357,6 +387,26 @@ namespace WheekKeys
                 DrawBubble(dc, right, now, true, b);
             }
             dc.Pop();
+        }
+
+        protected override int VisualChildrenCount { get { return pixelScene == null ? 0 : 1; } }
+
+        protected override Visual GetVisualChild(int index)
+        {
+            if (index != 0 || pixelScene == null) throw new ArgumentOutOfRangeException("index");
+            return pixelScene;
+        }
+
+        protected override Size MeasureOverride(Size availableSize)
+        {
+            if (pixelScene != null) pixelScene.Measure(new Size(400, 308));
+            return new Size(400, 308);
+        }
+
+        protected override Size ArrangeOverride(Size finalSize)
+        {
+            if (pixelScene != null) pixelScene.Arrange(new Rect(0, 0, 400, 308));
+            return finalSize;
         }
 
         private void DrawPaw(DrawingContext dc, Point tip, Rect chest, bool far)
