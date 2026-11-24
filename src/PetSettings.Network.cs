@@ -9,7 +9,6 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Runtime.InteropServices;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 
 namespace WheekKeys
@@ -17,7 +16,6 @@ namespace WheekKeys
     internal sealed partial class PetSettings
     {
         private static readonly Brush OnlineInk = BrushFrom(77, 100, 64);
-        private static readonly Dictionary<PetSkin, ImageSource> Portraits = new Dictionary<PetSkin, ImageSource>();
         private readonly Dictionary<string, PartnerRow> partnerRows = new Dictionary<string, PartnerRow>();
         private readonly StackPanel roster = new StackPanel();
         private readonly TextBlock connection = Label(11, Muted);
@@ -73,11 +71,6 @@ namespace WheekKeys
             controls.Children.Add(state);
             controls.Children.Add(BuildToggleRow("同步按键和鼠标动作", MakeSwitch(owner.Network.ShareActivity,
                 delegate(bool value) { owner.Network.ShareActivity = value; })));
-            TextBlock activityHint = Label(10.5, Muted);
-            activityHint.Text = "联机时会共享具体按键，好友的小猪和键盘会出现在桌面。双方需使用新版。";
-            activityHint.TextWrapping = TextWrapping.Wrap;
-            activityHint.Margin = new Thickness(1, 0, 1, 3);
-            controls.Children.Add(activityHint);
             DockPanel join = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
             Button joinButton = ActionButton("加入", Paper2, JoinTypedRoom);
             joinButton.Margin = new Thickness(5, 0, 0, 0);
@@ -359,28 +352,7 @@ namespace WheekKeys
 
         private static ImageSource Portrait(PetSkin skin)
         {
-            ImageSource image;
-            if (Portraits.TryGetValue(skin, out image)) return image;
-            if (skin.PixelCoatId != null)
-            {
-                image = PixelPetScene.Portrait(skin.PixelCoatId);
-                Portraits.Add(skin, image);
-                return image;
-            }
-            DrawingGroup pig = new DrawingGroup();
-            using (DrawingContext dc = pig.Open())
-            {
-                dc.PushTransform(new ScaleTransform(-1, 1, 50, 0));
-                dc.DrawImage(PetScene.Sprite(skin.BodyResource), new Rect(0, 0, 100, 66));
-                var sheet = PetScene.Sprite(skin.Id + "-eyes.png");
-                var eye = new CroppedBitmap(sheet, new Int32Rect(0, 0, sheet.PixelWidth / 4, sheet.PixelHeight / 3));
-                dc.DrawImage(eye, new Rect(58, 16.5, 22, 19.8));
-                dc.Pop();
-            }
-            image = new DrawingImage(pig);
-            image.Freeze();
-            Portraits.Add(skin, image);
-            return image;
+            return PixelPetScene.Portrait(skin.PixelCoatId);
         }
 
         private static Grid RosterGrid()

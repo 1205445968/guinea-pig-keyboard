@@ -91,6 +91,7 @@ final class PetSettingsViewController: NSViewController {
         let coatLabel = sectionLabel("毛色")
         add(coatLabel, x: 18, top: 14, width: 200, height: 18, to: petPage)
 
+        let controlOffset = CGFloat(((PetSkin.all.count + 2) / 3 - 2) * 34)
         for (index, skin) in PetSkin.all.enumerated() {
             let button = skinButtons[skin.id]!
             button.target = self
@@ -103,39 +104,39 @@ final class PetSettingsViewController: NSViewController {
             button.imageScaling = .scaleProportionallyUpOrDown
             button.font = .systemFont(ofSize: 12, weight: .medium)
             button.alignment = .center
-            button.image = skinThumbnail(skin)
+            button.image = skin.portrait(size: NSSize(width: 16, height: 17))
             button.setButtonType(.momentaryPushIn)
             add(button, x: 18 + CGFloat(index % 3) * 95, top: 37 + CGFloat(index / 3) * 34,
                 width: 90, height: 30, to: petPage)
         }
 
         let sizeLabel = sectionLabel("大小")
-        add(sizeLabel, x: 18, top: 120, width: 100, height: 18, to: petPage)
+        add(sizeLabel, x: 18, top: 120 + controlOffset, width: 100, height: 18, to: petPage)
         scaleValue.font = .systemFont(ofSize: 12, weight: .semibold)
         scaleValue.textColor = mutedBrown
         scaleValue.alignment = .center
-        add(scaleValue, trailing: 54, top: 120, width: 45, height: 18, to: petPage)
+        add(scaleValue, trailing: 54, top: 120 + controlOffset, width: 45, height: 18, to: petPage)
 
         let minus = controlButton("−", action: #selector(decreaseScale))
-        add(minus, trailing: 103, top: 114, width: 30, height: 30, to: petPage)
+        add(minus, trailing: 103, top: 114 + controlOffset, width: 30, height: 30, to: petPage)
         let plus = controlButton("+", action: #selector(increaseScale))
-        add(plus, trailing: 18, top: 114, width: 30, height: 30, to: petPage)
+        add(plus, trailing: 18, top: 114 + controlOffset, width: 30, height: 30, to: petPage)
 
         labelsSwitch.target = self
         labelsSwitch.action = #selector(toggleLabels(_:))
         labelsSwitch.font = .systemFont(ofSize: 12)
         labelsSwitch.contentTintColor = darkBrown
-        add(labelsSwitch, x: 18, top: 157, width: 270, height: 22, to: petPage)
+        add(labelsSwitch, x: 18, top: 157 + controlOffset, width: 270, height: 22, to: petPage)
         clickThroughSwitch.target = self
         clickThroughSwitch.action = #selector(toggleClickThrough(_:))
         clickThroughSwitch.font = .systemFont(ofSize: 12)
         clickThroughSwitch.contentTintColor = darkBrown
-        add(clickThroughSwitch, x: 18, top: 188, width: 270, height: 22, to: petPage)
+        add(clickThroughSwitch, x: 18, top: 188 + controlOffset, width: 270, height: 22, to: petPage)
 
         sogouSwitch.target = self
         sogouSwitch.action = #selector(toggleSogou(_:))
         sogouSwitch.font = .systemFont(ofSize: 12)
-        add(sogouSwitch, x: 18, top: 219, width: 280, height: 22, to: petPage)
+        add(sogouSwitch, x: 18, top: 219 + controlOffset, width: 280, height: 22, to: petPage)
         createRoom.target = self
         createRoom.action = #selector(createRoomAction)
         add(createRoom, x: 18, top: 10, width: 88, height: 26, to: lanPage)
@@ -262,7 +263,7 @@ final class PetSettingsViewController: NSViewController {
         for skin in PetSkin.all {
             guard let button = skinButtons[skin.id] else { continue }
             let selected = skin.id == skinID
-            button.title = skin.name
+            button.title = String(skin.name.dropFirst(2))
             button.toolTip = selected ? skin.name + "（当前）" : skin.name
             button.layer?.borderWidth = selected ? 1.5 : 0.5
             button.layer?.borderColor = mutedBrown.withAlphaComponent(selected ? 0.8 : 0.3).cgColor
@@ -298,23 +299,10 @@ final class PetSettingsViewController: NSViewController {
     }
 
     private func portrait(_ id: String) -> NSImage? {
-        if let cached = portraitCache[id] { return cached }
         let skin = PetSkin.named(id)
-        guard let bodyURL = Bundle.main.url(forResource: skin.body, withExtension: nil),
-              let eyeURL = Bundle.main.url(forResource: id + "-eyes.png", withExtension: nil),
-              let body = NSImage(contentsOf: bodyURL), let atlas = NSImage(contentsOf: eyeURL),
-              let cg = atlas.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              let eye = cg.cropping(to: CGRect(x: 0, y: 0, width: cg.width / 4, height: cg.height / 3)) else { return nil }
-        let image = NSImage(size: NSSize(width: 48, height: 40))
-        image.lockFocus()
-        if let context = NSGraphicsContext.current?.cgContext {
-            context.translateBy(x: 48, y: 0)
-            context.scaleBy(x: -1, y: 1)
-        }
-        body.draw(in: NSRect(x: 0, y: 3, width: 48, height: 32))
-        NSImage(cgImage: eye, size: NSSize(width: 10.6, height: 9.6)).draw(in: NSRect(x: 27.8, y: 17.4, width: 10.6, height: 9.6))
-        image.unlockFocus()
-        portraitCache[id] = image
+        if let cached = portraitCache[skin.id] { return cached }
+        let image = skin.portrait(size: NSSize(width: 38, height: 40))
+        portraitCache[skin.id] = image
         return image
     }
 
@@ -347,49 +335,6 @@ final class PetSettingsViewController: NSViewController {
     @objc private func returnToCorner() { onReturnToCorner?() }
     @objc private func quitApp() { onQuit?() }
     @objc private func closePanel() { onClose?() }
-
-    private func skinThumbnail(_ skin: PetSkin) -> NSImage? {
-        let swatch = NSImage(size: NSSize(width: 25, height: 25))
-        swatch.lockFocus()
-        let base: NSColor
-        let patches: [NSColor]
-        switch skin.id {
-        case "tricolor":
-            base = NSColor(calibratedRed: 248/255, green: 229/255, blue: 204/255, alpha: 1)
-            patches = [NSColor(calibratedRed: 205/255, green: 135/255, blue: 83/255, alpha: 1),
-                       NSColor(calibratedRed: 83/255, green: 61/255, blue: 48/255, alpha: 1)]
-        case "californian":
-            base = NSColor(calibratedRed: 244/255, green: 230/255, blue: 211/255, alpha: 1)
-            patches = [NSColor(calibratedRed: 79/255, green: 61/255, blue: 54/255, alpha: 1)]
-        case "gold-white", "longhair":
-            base = NSColor(calibratedRed: 250/255, green: 247/255, blue: 237/255, alpha: 1)
-            patches = [NSColor(calibratedRed: 218/255, green: 165/255, blue: 91/255, alpha: 1)]
-        case "teddy":
-            base = NSColor(calibratedRed: 168/255, green: 105/255, blue: 70/255, alpha: 1)
-            patches = [NSColor(calibratedRed: 222/255, green: 164/255, blue: 112/255, alpha: 1)]
-        default:
-            base = NSColor(calibratedRed: 161/255, green: 144/255, blue: 134/255, alpha: 1)
-            patches = [NSColor(calibratedRed: 103/255, green: 87/255, blue: 79/255, alpha: 1)]
-        }
-        base.setFill()
-        NSBezierPath(roundedRect: NSRect(x: 1, y: 1, width: 23, height: 23), xRadius: 8, yRadius: 8).fill()
-        if skin.id == "californian" {
-            patches[0].setFill()
-            NSBezierPath(ovalIn: NSRect(x: 2, y: 12, width: 8, height: 11)).fill()
-            NSBezierPath(ovalIn: NSRect(x: 15, y: 12, width: 8, height: 11)).fill()
-            NSBezierPath(ovalIn: NSRect(x: 9, y: 3, width: 8, height: 7)).fill()
-        } else {
-            patches[0].setFill()
-            NSBezierPath(ovalIn: NSRect(x: 2, y: 10, width: 12, height: 13)).fill()
-            if patches.count > 1 {
-                patches[1].setFill()
-                NSBezierPath(ovalIn: NSRect(x: 14, y: 2, width: 9, height: 13)).fill()
-            }
-        }
-        swatch.unlockFocus()
-        swatch.size = NSSize(width: 17, height: 17)
-        return swatch
-    }
 
     private func sectionLabel(_ value: String) -> NSTextField {
         let label = NSTextField(labelWithString: value)

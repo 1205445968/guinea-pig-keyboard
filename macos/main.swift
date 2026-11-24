@@ -2,26 +2,6 @@ import AppKit
 import ApplicationServices
 import Carbon
 
-struct PetSkin {
-    let id: String
-    let name: String
-    let body: String
-    let paw: String
-
-    static let all: [PetSkin] = [
-        PetSkin(id: "tricolor", name: "三花", body: "guinea-pig.png", paw: "paw.png"),
-        PetSkin(id: "californian", name: "白加州", body: "californian-body.png", paw: "californian-paw.png"),
-        PetSkin(id: "gold-white", name: "黄白英短", body: "gold-white-body.png", paw: "gold-white-paw.png"),
-        PetSkin(id: "teddy", name: "美泰", body: "teddy-body.png", paw: "teddy-paw.png"),
-        PetSkin(id: "silver-agouti", name: "雕灰", body: "silver-agouti-body.png", paw: "silver-agouti-paw.png"),
-        PetSkin(id: "longhair", name: "长毛猪", body: "longhair-body.png", paw: "longhair-paw.png")
-    ]
-
-    static func named(_ id: String) -> PetSkin {
-        all.first { $0.id == id } ?? all[0]
-    }
-}
-
 private final class PetPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
@@ -36,7 +16,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private var settingsController: PetSettingsViewController?
     private var eventTap: CFMachPort?
     private var eventSource: CFRunLoopSource?
-    private var skinID = "tricolor"
+    private var skinID = PetSkin.all[0].id
     private var nickname = ""
     private var scale = 1.0
     private var clickThrough = false
@@ -54,7 +34,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        skinID = PetSkin.named(defaults.string(forKey: "skin") ?? "tricolor").id
+        skinID = PetSkin.named(defaults.string(forKey: "skin")).id
         nickname = LocalPeers.normalizedNickname(defaults.string(forKey: "nickname") ?? "") ?? ""
         let savedScale = defaults.double(forKey: "scale")
         scale = savedScale > 0 ? min(2.0, max(0.5, savedScale)) : 1.0
@@ -98,7 +78,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         self.inputTimer = inputTimer
         RunLoop.main.add(inputTimer, forMode: .common)
         peers.payload = { [weak self] in
-            guard let self = self else { return ("tricolor", 0, 0) }
+            guard let self = self else { return (PetSkin.all[0].id, 0, 0) }
             return (self.skinID, self.keyCount, self.clickCount)
         }
 
@@ -325,7 +305,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
 
     private func startEventTap() {
         guard eventTap == nil else { return }
-        let types: [CGEventType] = [.keyDown, .flagsChanged, .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .leftMouseDown, .rightMouseDown]
+        let types: [CGEventType] = [.keyDown, .flagsChanged, .mouseMoved, .leftMouseDragged, .rightMouseDragged,
+                                   .otherMouseDragged, .leftMouseDown, .rightMouseDown, .scrollWheel]
         let mask = types.reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
         let callback: CGEventTapCallBack = { _, type, event, info in
             guard let info = info else { return Unmanaged.passUnretained(event) }
@@ -384,6 +365,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             clickCount = min(UInt64(Int64.max), clickCount + 1)
             countsDirty = true
             pet.clickMouse(right: type == .rightMouseDown)
+        case .scrollWheel:
+            let points = event.getIntegerValueField(.scrollWheelEventPointDeltaAxis1)
+            pet.scrollMouse(points == 0 ? event.getIntegerValueField(.scrollWheelEventDeltaAxis1) : points)
         default: break
         }
     }

@@ -62,13 +62,15 @@ namespace WheekKeys
         private sealed class FriendWindow
         {
             private const int ExStyle = -20, Transparent = 0x20, Tool = 0x80, NoActivate = 0x08000000;
+            private const double LabelHeadroom = 14;
             [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint="GetWindowLong")] private static extern int GetWindowLong(IntPtr hwnd, int index);
             [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint="SetWindowLong")] private static extern int SetWindowLong(IntPtr hwnd, int index, int value);
             private readonly Window window;
             private readonly FrameworkElement viewport;
             private readonly Viewbox box;
-            private readonly PetScene scene;
+            private readonly PixelPetScene scene;
             private readonly TextBlock label;
+            private readonly TranslateTransform labelPosition = new TranslateTransform();
             private bool through;
             public readonly int Slot;
             public bool IsClosed { get; private set; }
@@ -78,16 +80,19 @@ namespace WheekKeys
                 this.viewport = viewport;
                 Slot = slot;
                 through = clickThrough;
-                scene = new PetScene();
+                scene = new PixelPetScene(false);
                 scene.ShowKeyLabels = true;
-                box = new Viewbox { Stretch = Stretch.Uniform, Child = scene };
+                box = new Viewbox { Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Bottom, Child = scene };
                 label = new TextBlock { Foreground = Brushes.White, Background = new SolidColorBrush(Color.FromArgb(190, 50, 38, 26)),
                     FontSize = 12, Padding = new Thickness(8, 3, 8, 3), HorizontalAlignment = HorizontalAlignment.Center,
-                    TextTrimming = TextTrimming.CharacterEllipsis, TextAlignment = TextAlignment.Center };
-                DockPanel panel = new DockPanel(); DockPanel.SetDock(label, Dock.Bottom); panel.Children.Add(label); panel.Children.Add(box);
-                window = new Window { Owner = owner, Width = Math.Max(180, owner.Width), Height = Math.Max(150, owner.Width * 308.0 / 400.0 + 25),
+                    VerticalAlignment = VerticalAlignment.Top, TextTrimming = TextTrimming.CharacterEllipsis,
+                    TextAlignment = TextAlignment.Center, RenderTransform = labelPosition };
+                Grid panel = new Grid { Children = { box, label } };
+                window = new Window { Owner = owner, Width = Math.Max(180, owner.Width), Height = Math.Max(150, owner.Width * 308.0 / 400.0 + LabelHeadroom),
                     WindowStyle = WindowStyle.None, AllowsTransparency = true, Background = Brushes.Transparent, Topmost = true,
                     ShowInTaskbar = false, ShowActivated = false, ResizeMode = ResizeMode.NoResize, Content = panel };
+                scene.HeadPositionChanged += PositionLabel;
+                label.SizeChanged += delegate { PositionLabel(); };
                 MatchSize();
                 window.SourceInitialized += delegate { ApplyStyles(); };
                 window.Closed += delegate { IsClosed = true; };
@@ -115,7 +120,7 @@ namespace WheekKeys
             {
                 Rect area = WorkArea(owner);
                 double step = window.Width + 12;
-                double left = owner.Left - step * (slot + 1), top = owner.Top;
+                double left = owner.Left - step * (slot + 1), top = owner.Top - LabelHeadroom;
                 if (left < area.Left) left = owner.Left + step * (slot + 1);
                 if (left + window.Width > area.Right)
                 {
@@ -154,7 +159,9 @@ namespace WheekKeys
                         else if (action.Kind == 'l' || action.Kind == 'r') scene.ClickMouse(action.Kind == 'r');
                     }
                 string name = String.IsNullOrEmpty(peer.Nickname) ? peer.Skin.Name : peer.Nickname;
-                label.Text = name + " · " + (peer.SupportsActivity ? (peer.SharingActivity ? "一起敲键盘" : "已暂停动作") : "旧版 · 仅外观");
+                label.Text = name;
+                if (!peer.SupportsActivity) label.Text += " · 旧版 · 仅外观";
+                else if (!peer.SharingActivity) label.Text += " · 已暂停动作";
                 label.ToolTip = name + " · " + peer.Skin.Name;
                 window.Title = "联机伙伴 · " + name;
                 if (through != clickThrough) { through = clickThrough; ApplyStyles(); }
@@ -166,9 +173,22 @@ namespace WheekKeys
                 if (box.Width == width && box.Height == height) return false;
                 box.Width = window.Width = width;
                 box.Height = height;
-                window.Height = height + 26;
+                window.Height = height + LabelHeadroom;
+                PositionLabel();
                 return true;
             }
+
+            private void PositionLabel()
+            {
+                double scale = Math.Min(box.Width / PixelPetScene.SceneWidth, box.Height / PixelPetScene.SceneHeight);
+                Point head = scene.HeadTop;
+                double x = (head.X - PixelPetScene.SceneWidth / 2) * scale;
+                double maxX = Math.Max(0, (box.Width - label.ActualWidth) / 2);
+                double sceneTop = LabelHeadroom + (box.Height - PixelPetScene.SceneHeight * scale) / 2;
+                labelPosition.X = Math.Max(-maxX, Math.Min(maxX, x));
+                labelPosition.Y = Math.Max(0, sceneTop + head.Y * scale - label.ActualHeight - 4);
+            }
+
             public void SetOwnerVisible(bool visible) { if (visible && !window.IsVisible) window.Show(); else if (!visible && window.IsVisible) window.Hide(); }
             public void Close() { if (!IsClosed) window.Close(); }
         }

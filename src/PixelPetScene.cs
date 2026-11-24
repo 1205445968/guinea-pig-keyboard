@@ -16,9 +16,11 @@ namespace WheekKeys
     {
         public const double SceneWidth = 400;
         public const double SceneHeight = 308;
+        private const double SceneOffsetX = 9;
         private const double SettleTime = 285;
         private const double BubbleTime = 395;
         private const double BlinkDuration = 180;
+        private const double ScrollDuration = 245;
         private static readonly BitmapImage BodySource = Sprite("guinea-pig.png");
         private static readonly BitmapImage PawSource = Sprite("paw.png");
         private readonly Dictionary<string, EyeArt> coatEyes = new Dictionary<string, EyeArt>();
@@ -27,7 +29,7 @@ namespace WheekKeys
         private BitmapSource Paw;
         private Brush ForelegFill;
         private Brush ForelegEdge;
-        private string coatId;
+        private PetSkin skin;
         private static readonly BitmapImage MouseSprite = Sprite("mouse.png");
         private static readonly SolidColorBrush Paper = Paint(255, 243, 216);
         private static readonly SolidColorBrush Umber = Paint(98, 71, 55);
@@ -39,6 +41,7 @@ namespace WheekKeys
         private readonly Random blinkRandom = new Random();
         private readonly DispatcherTimer animation;
         private readonly DispatcherTimer gaze;
+        private readonly bool followCursor;
         // These names refer to the viewer's side. The guinea pig faces the viewer.
         private readonly Stroke left = new Stroke(new Point(183, 201));
         private readonly Stroke right = new Stroke(new Point(239, 202));
@@ -47,6 +50,8 @@ namespace WheekKeys
         private double lastFrame;
         private double lastMouseUse = double.NegativeInfinity;
         private double lastClick = double.NegativeInfinity;
+        private double lastScroll = double.NegativeInfinity;
+        private int scrollDirection;
         private double mouseGrip;
         private bool rightButton;
         private bool showKeyLabels = true;
@@ -57,17 +62,23 @@ namespace WheekKeys
         private double blinkStarted = double.NegativeInfinity;
         private int blinkFrame;
 
+        internal Point HeadTop { get { return new Point(bodyBounds.Left + bodyBounds.Width / 2 + SceneOffsetX, bodyBounds.Top - 8); } }
+        internal event Action HeadPositionChanged;
+
         [StructLayout(LayoutKind.Sequential)]
         private struct CursorPoint { public int X, Y; }
 
         [DllImport("user32.dll")]
         private static extern bool GetCursorPos(out CursorPoint point);
 
-        public PixelPetScene()
+        public PixelPetScene() : this(true) { }
+
+        public PixelPetScene(bool followCursor)
         {
+            this.followCursor = followCursor;
             Width = SceneWidth;
             Height = SceneHeight;
-            CoatId = CoatArt.DefaultId;
+            Skin = PetSkin.All[0];
             RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.NearestNeighbor);
             animation = new DispatcherTimer(DispatcherPriority.Render);
             animation.Interval = TimeSpan.FromMilliseconds(24);
@@ -125,6 +136,7 @@ namespace WheekKeys
 
         private void UpdateGaze()
         {
+            if (!followCursor) return;
             CursorPoint cursor;
             if (!GetCursorPos(out cursor) || PresentationSource.FromVisual(this) == null) return;
             LookAt(PointFromScreen(new Point(cursor.X, cursor.Y)));
@@ -132,7 +144,7 @@ namespace WheekKeys
 
         public void LookAt(Point cursor)
         {
-            Vector offset = Eyes.Offset(cursor - new Vector(9, 0), bodyBounds);
+            Vector offset = Eyes.Offset(cursor - new Vector(SceneOffsetX, 0), bodyBounds);
             if (offset == gazeOffset) return;
             gazeOffset = offset;
             InvalidateVisual();
@@ -153,13 +165,13 @@ namespace WheekKeys
             set { showKeyLabels = value; InvalidateVisual(); }
         }
 
-        public string CoatId
+        public PetSkin Skin
         {
-            get { return coatId; }
+            get { return skin; }
             set
             {
-                CoatArt coat = CoatArt.Find(value);
-                if (coat.Id == coatId) return;
+                if (value == null || value == skin) return;
+                CoatArt coat = CoatArt.Find(value.PixelCoatId);
                 if (!coatEyes.TryGetValue(coat.Id, out Eyes))
                 {
                     Color eyeColor = coat.Id == "black-white" || coat.Id == "tricolor"
@@ -177,7 +189,7 @@ namespace WheekKeys
                 edge.Freeze();
                 ForelegFill = fill;
                 ForelegEdge = edge;
-                coatId = coat.Id;
+                skin = value;
                 InvalidateVisual();
             }
         }
@@ -212,6 +224,7 @@ namespace WheekKeys
                 mouseGrip = 0;
                 lastMouseUse = double.NegativeInfinity;
                 lastClick = double.NegativeInfinity;
+                lastScroll = double.NegativeInfinity;
             }
             hand.Start(now, start, PixelKeyboardArt.Target(scan, onRight), scan);
             Wake();
@@ -233,6 +246,14 @@ namespace WheekKeys
             Wake();
         }
 
+        public void ScrollMouse(int delta)
+        {
+            if (delta == 0) return;
+            scrollDirection = Math.Sign(delta);
+            lastMouseUse = lastScroll = clock.Elapsed.TotalMilliseconds;
+            Wake();
+        }
+
         private void Wake()
         {
             if (!animation.IsEnabled)
@@ -250,7 +271,7 @@ namespace WheekKeys
             mousePosition += (mouseDestination - mousePosition) * (1 - Math.Exp(-elapsed / 32));
             if ((mouseDestination - mousePosition).LengthSquared < 0.01) mousePosition = mouseDestination;
 
-            bool tapping = left.Active && now - left.Started < 130 && left.Started > lastClick;
+            bool tapping = left.Active && now - left.Started < 130 && left.Started > Math.Max(lastClick, lastScroll);
             double gripTarget = !tapping && now - lastMouseUse <= 250 ? 1 : 0;
             double ease = 1 - Math.Exp(-elapsed / (gripTarget > mouseGrip ? 30 : 53));
             mouseGrip += (gripTarget - mouseGrip) * ease;
@@ -267,6 +288,8 @@ namespace WheekKeys
             double press = Contact(now - lastClick);
             Point palm = mousePosition + new Vector(3, -2);
             Point target = palm + (MouseButtonPoint() - palm) * press;
+            double scroll = Math.Max(0, 1 - (now - lastScroll) / ScrollDuration);
+            target.Y -= 11 * scrollDirection * scroll;
             return keyboardTip + (target - keyboardTip) * Math.Max(mouseGrip, press);
         }
 
@@ -373,8 +396,13 @@ namespace WheekKeys
             lp = FollowBody(lp, lean, dip, left.BodyAttachment(now) * (1 - mouseReach));
             rp = FollowBody(rp, lean, dip, right.BodyAttachment(now));
 
-            bodyBounds = new Rect(126 + lean, 39 + dip, 174, 181);
-            dc.PushTransform(new TranslateTransform(9, 0));
+            Rect nextBody = new Rect(126 + lean, 39 + dip, 174, 181);
+            if (nextBody != bodyBounds)
+            {
+                bodyBounds = nextBody;
+                if (HeadPositionChanged != null) HeadPositionChanged();
+            }
+            dc.PushTransform(new TranslateTransform(SceneOffsetX, 0));
             Eyes.Draw(dc, bodyBounds, headOffset, blinkFrame);
             DrawMouse(dc, click);
             PixelKeyboardArt.Draw(dc, right.Scan, r, left.Scan, l);

@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
@@ -198,7 +199,11 @@ namespace WheekKeys
 
             StackPanel title = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             title.Children.Add(new TextBlock { Text = "豚鼠键盘", FontSize = 15, FontWeight = FontWeights.Bold, Foreground = Ink });
-            title.Children.Add(new TextBlock { Text = "桌宠设置", FontSize = 10, Foreground = Muted, Margin = new Thickness(0, 1, 0, 0) });
+            TextBlock subtitle = new TextBlock { FontSize = 10, Foreground = Muted, Margin = new Thickness(0, 1, 0, 0) };
+            string version = typeof(PetSettings).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion;
+            subtitle.Inlines.Add(new Run("桌宠设置"));
+            subtitle.Inlines.Add(new Run("  v" + version) { FontSize = 9, Foreground = Brushes.Gray });
+            title.Children.Add(subtitle);
             Grid.SetColumn(title, 1);
             row.Children.Add(title);
 
@@ -220,7 +225,7 @@ namespace WheekKeys
             {
                 PetSkin current = skin;
                 StackPanel content = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left };
-                content.Children.Add(BuildSwatch(current.Id));
+                content.Children.Add(BuildSwatch(current));
                 content.Children.Add(new TextBlock { Text = current.Name, FontSize = 9.5, VerticalAlignment = VerticalAlignment.Center, Foreground = Ink, Margin = new Thickness(4, 0, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = current.Name });
                 Button button = MakeButton(content, Paper2, Ink, double.NaN, 29);
                 button.HorizontalContentAlignment = HorizontalAlignment.Left;
@@ -245,31 +250,9 @@ namespace WheekKeys
             return section;
         }
 
-        private static UIElement BuildSwatch(string id)
+        private static UIElement BuildSwatch(PetSkin skin)
         {
-            PetSkin skin = PetSkin.FromId(id);
-            if (skin.PixelCoatId != null)
-                return new Image { Source = PixelPetScene.Portrait(skin.PixelCoatId), Width = 14, Height = 14, Stretch = Stretch.Uniform };
-            Color baseColor;
-            Color patch = Colors.Transparent;
-            switch (id)
-            {
-                case "tricolor": baseColor = Color.FromRgb(248, 235, 206); patch = Color.FromRgb(117, 78, 52); break;
-                case "californian": baseColor = Color.FromRgb(248, 240, 220); patch = Color.FromRgb(119, 87, 62); break;
-                case "gold-white": baseColor = Color.FromRgb(220, 164, 91); patch = Color.FromRgb(255, 247, 227); break;
-                case "teddy": baseColor = Color.FromRgb(201, 164, 121); break;
-                case "longhair": baseColor = Color.FromRgb(253, 228, 191); patch = Color.FromRgb(222, 172, 98); break;
-                default: baseColor = Color.FromRgb(157, 151, 139); break;
-            }
-            Grid swatch = new Grid { Width = 14, Height = 14, ClipToBounds = true };
-            Ellipse body = new Ellipse { Fill = new SolidColorBrush(baseColor), Stroke = new SolidColorBrush(Color.FromRgb(132, 112, 83)), StrokeThickness = 0.65 };
-            swatch.Children.Add(body);
-            if (patch != Colors.Transparent)
-            {
-                Ellipse spot = new Ellipse { Width = 7, Height = 7, Fill = new SolidColorBrush(patch), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(1, 1, 0, 0) };
-                swatch.Children.Add(spot);
-            }
-            return swatch;
+            return new Image { Source = PixelPetScene.Portrait(skin.PixelCoatId), Width = 14, Height = 14, Stretch = Stretch.Uniform };
         }
 
         private Grid BuildToggleRow(string label, ToggleButton toggle)

@@ -21,6 +21,7 @@ namespace WheekKeys
         private const ushort RiKeyE1 = 0x0004;
         private const ushort RiMouseLeftButtonDown = 0x0001;
         private const ushort RiMouseRightButtonDown = 0x0004;
+        private const ushort RiMouseWheel = 0x0400;
         private const ushort MouseMoveAbsolute = 0x0001;
         private const ushort MouseVirtualDesktop = 0x0002;
 
@@ -31,17 +32,20 @@ namespace WheekKeys
         private readonly Action<int, bool> keyPressed;
         private readonly Action<bool> mousePressed;
         private readonly Action<double, double> mouseMoved;
+        private readonly Action<int> mouseScrolled;
         private readonly Dictionary<IntPtr, AbsolutePosition> absolutePositions = new Dictionary<IntPtr, AbsolutePosition>();
         private readonly Dictionary<IntPtr, HashSet<int>> heldKeys = new Dictionary<IntPtr, HashSet<int>>();
         private readonly HwndSourceHook hook;
         private bool disposed;
 
-        public DesktopInput(HwndSource source, Action<int, bool> keyPressed, Action<bool> mousePressed, Action<double, double> mouseMoved)
+        public DesktopInput(HwndSource source, Action<int, bool> keyPressed, Action<bool> mousePressed,
+            Action<double, double> mouseMoved, Action<int> mouseScrolled)
         {
             if (source == null) throw new ArgumentNullException("source");
             if (keyPressed == null) throw new ArgumentNullException("keyPressed");
             if (mousePressed == null) throw new ArgumentNullException("mousePressed");
             if (mouseMoved == null) throw new ArgumentNullException("mouseMoved");
+            if (mouseScrolled == null) throw new ArgumentNullException("mouseScrolled");
             if (source.IsDisposed || source.Handle == IntPtr.Zero)
                 throw new ArgumentException("A live window source is required.", "source");
 
@@ -49,6 +53,7 @@ namespace WheekKeys
             this.keyPressed = keyPressed;
             this.mousePressed = mousePressed;
             this.mouseMoved = mouseMoved;
+            this.mouseScrolled = mouseScrolled;
             hook = WndProc;
             source.AddHook(hook);
             RawInputDevice[] devices = CreateDevices(RidevInputSink | RidevDeviceNotify, source.Handle);
@@ -90,11 +95,7 @@ namespace WheekKeys
             }
             else if (input.Header.Type == RimTypeMouse && received >= HeaderSize + 24)
             {
-                RawMouse mouse = input.Data.Mouse;
-                ProcessMouse(input.Header.Device, mouse);
-                ushort buttons = mouse.ButtonFlags;
-                if ((buttons & RiMouseLeftButtonDown) != 0) mousePressed(false);
-                if ((buttons & RiMouseRightButtonDown) != 0) mousePressed(true);
+                ProcessMouse(input.Header.Device, input.Data.Mouse);
             }
             return IntPtr.Zero;
         }
@@ -116,6 +117,15 @@ namespace WheekKeys
         }
 
         private void ProcessMouse(IntPtr device, RawMouse mouse)
+        {
+            ProcessMouseMovement(device, mouse);
+            ushort buttons = mouse.ButtonFlags;
+            if ((buttons & RiMouseLeftButtonDown) != 0) mousePressed(false);
+            if ((buttons & RiMouseRightButtonDown) != 0) mousePressed(true);
+            if ((buttons & RiMouseWheel) != 0 && mouse.WheelDelta != 0) mouseScrolled(mouse.WheelDelta);
+        }
+
+        private void ProcessMouseMovement(IntPtr device, RawMouse mouse)
         {
             if ((mouse.Flags & MouseMoveAbsolute) == 0)
             {
@@ -204,6 +214,7 @@ namespace WheekKeys
         {
             [FieldOffset(0)] public ushort Flags;
             [FieldOffset(4)] public ushort ButtonFlags;
+            [FieldOffset(6)] public short WheelDelta;
             [FieldOffset(12)] public int LastX;
             [FieldOffset(16)] public int LastY;
         }

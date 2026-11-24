@@ -56,7 +56,7 @@ namespace WheekKeys
         [DllImport("user32.dll", EntryPoint = "SetWindowLong")]
         private static extern int SetWindowLong(IntPtr hwnd, int index, int value);
 
-        private readonly PetScene scene;
+        private readonly PixelPetScene scene;
         private readonly Forms.NotifyIcon tray;
         private readonly string settingsPath;
         private readonly LocalPeers peers = new LocalPeers();
@@ -88,7 +88,7 @@ namespace WheekKeys
             ShowActivated = false;
             ResizeMode = ResizeMode.NoResize;
             WindowStartupLocation = WindowStartupLocation.Manual;
-            scene = new PetScene();
+            scene = new PixelPetScene();
             scene.ShowKeyLabels = true;
             Viewbox view = new Viewbox();
             view.Width = double.NaN;
@@ -164,7 +164,9 @@ namespace WheekKeys
             HwndSource source = (HwndSource)PresentationSource.FromVisual(this);
             ApplyWindowStyles(source.Handle);
             EnsureVisible();
-            input = new DesktopInput(source, OnKey, OnClick, delegate(double dx, double dy) { if (IsVisible) scene.MoveMouse(dx, dy); });
+            input = new DesktopInput(source, OnKey, OnClick,
+                delegate(double dx, double dy) { if (IsVisible) scene.MoveMouse(dx, dy); },
+                delegate(int delta) { if (IsVisible) scene.ScrollMouse(delta); });
         }
 
         private void OnKey(int scan, bool firstPress)

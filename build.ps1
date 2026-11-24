@@ -17,16 +17,7 @@ try {
     foreach ($assembly in 'WindowsBase', 'PresentationCore', 'PresentationFramework') {
         $arguments += '/reference:' + (Join-Path $frameworkDir "WPF\$assembly.dll")
     }
-    foreach ($asset in 'guinea-pig.png', 'paw.png', 'keyboard.png', 'mouse.png', 'avatar.png') {
-        $arguments += "/resource:assets/$asset,$asset"
-    }
-    if (-not (Test-Path -LiteralPath 'assets/keyboard-layout.txt')) {
-        throw 'Missing assets/keyboard-layout.txt.'
-    }
-    $arguments += '/resource:assets/keyboard-layout.txt,keyboard-layout.txt'
-    foreach ($asset in Get-ChildItem -LiteralPath 'assets/skins' -Filter '*.png' -File) {
-        $arguments += "/resource:assets/skins/$($asset.Name),$($asset.Name)"
-    }
+    $arguments += '/resource:assets/avatar.png,avatar.png'
     foreach ($asset in Get-ChildItem -LiteralPath 'assets/pixel' -Filter '*.png' -File) {
         $arguments += "/resource:assets/pixel/$($asset.Name),pixel-$($asset.Name)"
     }

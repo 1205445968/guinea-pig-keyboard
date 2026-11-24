@@ -1,9 +1,11 @@
 using System;
 using System.Collections;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Threading;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -25,7 +27,7 @@ internal static class PixelSkinSmokeTest
         {
             FieldInfo pathField = windowType.GetField("settingsPath", BindingFlags.Instance | BindingFlags.NonPublic);
             pathField.SetValue(owner, profile);
-            File.WriteAllLines(profile, new[] { "111", "222", "330", "False", "True", "pixel-tricolor", "False", "12345", "6789", "测试豚鼠" });
+            File.WriteAllLines(profile, new[] { "111", "222", "330", "False", "True", "gold-white", "False", "12345", "6789", "测试豚鼠" });
             MethodInfo restore = windowType.GetMethod("RestoreSettings", BindingFlags.Instance | BindingFlags.NonPublic);
             restore.Invoke(owner, null);
             Check(Convert.ToDouble(windowType.GetProperty("Left").GetValue(owner, null)) == 111, "left");
@@ -40,11 +42,15 @@ internal static class PixelSkinSmokeTest
             FieldInfo ready = windowType.GetField("ready", BindingFlags.Instance | BindingFlags.NonPublic);
             ready.SetValue(owner, true);
             settings = (Window)Activator.CreateInstance(assembly.GetType("WheekKeys.PetSettings", true), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new[] { owner }, null);
+            CheckSettingsLabels(settings, assembly);
             FieldInfo buttonsField = settings.GetType().GetField("skinButtons", BindingFlags.Instance | BindingFlags.NonPublic);
             IDictionary buttons = (IDictionary)buttonsField.GetValue(settings);
-            Check(buttons.Count == 20, "skin button count");
+            object restoredSkin = windowType.GetProperty("ActiveSkin", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(owner, null);
+            Check((string)skinType.GetField("Id").GetValue(restoredSkin) == "pixel-golden-white", "legacy profile migrated");
+            Check(buttons.Count == 14, "skin button count");
             foreach (DictionaryEntry entry in buttons)
             {
+                Check(((string)entry.Key).StartsWith("pixel-", StringComparison.Ordinal), "pixel-only button");
                 Button button = (Button)entry.Value;
                 button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 object active = windowType.GetProperty("ActiveSkin", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).GetValue(owner, null);
@@ -58,10 +64,10 @@ internal static class PixelSkinSmokeTest
             object oldAlias = fromId.Invoke(null, new object[] { "longhair-buff" });
             Check((string)skinType.GetField("Id").GetValue(oldAlias) == "pixel-longhair-buff", "old alias");
             object fallback = fromId.Invoke(null, new object[] { "unknown-skin-id" });
-            Check((string)skinType.GetField("Id").GetValue(fallback) == "tricolor", "unknown fallback");
+            Check((string)skinType.GetField("Id").GetValue(fallback) == "pixel-tricolor", "unknown fallback");
             CheckRenderLifecycle(assembly);
             CheckNetworkCompatibility(assembly);
-            Console.WriteLine("PASS: settings roundtrips, 20 skin buttons, render lifecycle, legacy aliases, peer names and counters");
+            Console.WriteLine("PASS: settings labels and roundtrips, 14 pixel skin buttons, wheel animation, render lifecycle, legacy aliases, peer names and counters");
             return 0;
         }
         catch (Exception ex)
@@ -85,6 +91,23 @@ internal static class PixelSkinSmokeTest
         if (!condition) throw new InvalidOperationException("Check failed: " + label);
     }
 
+    private static void CheckSettingsLabels(Window settings, Assembly app)
+    {
+        var layout = (Grid)((Border)settings.Content).Child;
+        var header = (Grid)((StackPanel)layout.Children[0]).Children[0];
+        var subtitle = (TextBlock)((StackPanel)header.Children[1]).Children[1];
+        string version = app.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion;
+        Run[] labels = subtitle.Inlines.OfType<Run>().ToArray();
+        Check(labels.Length == 2 && labels[0].Text == "桌宠设置", "settings header text");
+        Run versionLabel = labels[1];
+        Check(versionLabel.Text.Trim() == "v" + version, "settings label uses the product version");
+        Check(versionLabel.FontSize < subtitle.FontSize && ((SolidColorBrush)versionLabel.Foreground).Color == Colors.Gray,
+            "settings version label appears in smaller gray text");
+        var network = (DockPanel)Field(settings, "networkPage");
+        var controls = (StackPanel)network.Children[0];
+        Check(!controls.Children.OfType<TextBlock>().Any(label => label.Text.Contains("联机时会共享具体按键")), "removed network paragraph");
+    }
+
     private static object Field(object value, string name)
     {
         return value.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(value);
@@ -99,7 +122,7 @@ internal static class PixelSkinSmokeTest
 
     private static void CheckRenderLifecycle(Assembly assembly)
     {
-        Type sceneType = assembly.GetType("WheekKeys.PetScene", true);
+        Type sceneType = assembly.GetType("WheekKeys.PixelPetScene", true);
         Type skinType = assembly.GetType("WheekKeys.PetSkin", true);
         var scene = (FrameworkElement)Activator.CreateInstance(sceneType);
         var options = new HwndSourceParameters("Pixel skin lifecycle test")
@@ -114,28 +137,56 @@ internal static class PixelSkinSmokeTest
             object pixel = skinType.GetMethod("FromId").Invoke(null, new object[] { "pixel-longhair-tricolor" });
             sceneType.GetProperty("Skin").SetValue(scene, pixel, null);
             Pump();
-            object child = Field(scene, "pixelScene");
-            Check(child != null && ((FrameworkElement)child).IsLoaded, "pixel child attached");
-            Check(((DispatcherTimer)Field(child, "gaze")).IsEnabled, "pixel gaze started");
-            Check(!((DispatcherTimer)Field(scene, "blinkTimer")).IsEnabled, "native blink paused");
+            Check(scene.IsLoaded && ((DispatcherTimer)Field(scene, "gaze")).IsEnabled, "pixel gaze started");
+            CheckWheelInput(assembly, host, scene);
             sceneType.GetMethod("PressKey").Invoke(scene, new object[] { 47 });
-            object left = Field(child, "left"), right = Field(child, "right");
+            object left = Field(scene, "left"), right = Field(scene, "right");
             Check((bool)left.GetType().GetField("Active").GetValue(left)
                 || (bool)right.GetType().GetField("Active").GetValue(right), "pixel key forwarding");
             sceneType.GetMethod("MoveMouse").Invoke(scene, new object[] { 90.0, -30.0 });
-            Check((Point)Field(child, "mouseDestination") != new Point(31, 243), "pixel mouse forwarding");
+            Check((Point)Field(scene, "mouseDestination") != new Point(31, 243), "pixel mouse forwarding");
             sceneType.GetMethod("ClickMouse").Invoke(scene, new object[] { true });
-            Check((bool)Field(child, "rightButton"), "pixel click forwarding");
+            Check((bool)Field(scene, "rightButton"), "pixel click forwarding");
             sceneType.GetProperty("ShowKeyLabels").SetValue(scene, false, null);
-            Check(!(bool)child.GetType().GetProperty("ShowKeyLabels").GetValue(child, null), "label forwarding");
-            object native = skinType.GetMethod("FromId").Invoke(null, new object[] { "tricolor" });
-            sceneType.GetProperty("Skin").SetValue(scene, native, null);
-            Pump();
-            Check(Field(scene, "pixelScene") == null, "pixel child detached");
-            Check(!((DispatcherTimer)Field(child, "gaze")).IsEnabled
-                && !((DispatcherTimer)Field(child, "animation")).IsEnabled, "detached timers stopped");
+            Check(!(bool)scene.GetType().GetProperty("ShowKeyLabels").GetValue(scene, null), "label forwarding");
             host.RootVisual = null;
             Pump();
+            Check(!((DispatcherTimer)Field(scene, "gaze")).IsEnabled
+                && !((DispatcherTimer)Field(scene, "animation")).IsEnabled, "detached timers stopped");
+        }
+    }
+
+    private static void CheckWheelInput(Assembly app, HwndSource host, FrameworkElement scene)
+    {
+        const BindingFlags privateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
+        Type sceneType = scene.GetType();
+        MethodInfo scroll = sceneType.GetMethod("ScrollMouse");
+        MethodInfo mouseHand = sceneType.GetMethod("MouseHand", privateInstance);
+        Type inputType = app.GetType("WheekKeys.DesktopInput", true);
+        Type packetType = inputType.GetNestedType("RawMouse", BindingFlags.NonPublic);
+        MethodInfo process = inputType.GetMethod("ProcessMouse", privateInstance);
+        int clicks = 0;
+        int wheelEvents = 0;
+        Action<int> onWheel = delegate(int delta) { wheelEvents++; scroll.Invoke(scene, new object[] { delta }); };
+        using (var input = (IDisposable)Activator.CreateInstance(inputType, new object[] {
+            host, new Action<int, bool>(delegate { }), new Action<bool>(delegate { clicks++; }),
+            new Action<double, double>(delegate { }), onWheel }))
+        {
+            object packet = Activator.CreateInstance(packetType);
+            packetType.GetField("ButtonFlags").SetValue(packet, (ushort)0x0400);
+            FieldInfo deltaField = packetType.GetField("WheelDelta");
+            deltaField.SetValue(packet, (short)15);
+            process.Invoke(input, new object[] { IntPtr.Zero, packet });
+            Check(((DispatcherTimer)Field(scene, "animation")).IsEnabled, "wheel wakes animation");
+            sceneType.GetField("mouseGrip", privateInstance).SetValue(scene, 1.0);
+            Point start = new Point(183, 201);
+            Point up = (Point)mouseHand.Invoke(scene, new object[] { start, (double)Field(scene, "lastScroll") + 100 });
+            deltaField.SetValue(packet, (short)-120);
+            process.Invoke(input, new object[] { IntPtr.Zero, packet });
+            Point down = (Point)mouseHand.Invoke(scene, new object[] { start, (double)Field(scene, "lastScroll") + 100 });
+            deltaField.SetValue(packet, (short)0);
+            process.Invoke(input, new object[] { IntPtr.Zero, packet });
+            Check(up.Y < down.Y && wheelEvents == 2 && clicks == 0, "signed wheel movement without clicks");
         }
     }
 
@@ -160,6 +211,10 @@ internal static class PixelSkinSmokeTest
             object member = members[session];
             Check((long)member.GetType().GetField("Keys").GetValue(member) == 12345
                 && (long)member.GetType().GetField("Clicks").GetValue(member) == 6789, "peer counters");
+            object peerSkin = member.GetType().GetField("Skin").GetValue(member);
+            Check((string)skinType.GetField("Id").GetValue(peerSkin) == "pixel-longhair-gold-white", "legacy peer skin mapped");
+            read.Invoke(peer, new object[] { "WK1|" + session + "|unknown|0|0", 10.5 });
+            Check((long)member.GetType().GetField("Keys").GetValue(member) == 12345, "unknown skin packet ignored");
             string encoded = (string)assembly.GetType("WheekKeys.PetName").GetMethod("Encode").Invoke(null, new object[] { "测试豚鼠" });
             read.Invoke(peer, new object[] { "WN1|" + session + "|" + encoded, 11.0 });
             Check((string)member.GetType().GetField("Nickname").GetValue(member) == "测试豚鼠", "peer nickname");

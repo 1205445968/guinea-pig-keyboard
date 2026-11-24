@@ -10,6 +10,8 @@ import AppKit
     let valid = "WK1|\(remoteID)|longhair|123|45"
     guard let parsed = parse(valid) else { fatalError("Valid peer packet rejected") }
     precondition(parsed.0 == remoteID && parsed.1.keys == 123 && parsed.1.clicks == 45)
+    precondition(parsed.1.skin == "pixel-longhair-gold-white", "Old peer coat was not mapped")
+    precondition(PetSkin.named("gold-white").id == "pixel-golden-white", "Old profile coat was not mapped")
     for invalid in ["WK1|\(ownID)|longhair|1|2", "WK1|\(remoteID)|unknown|1|2",
                     "WK1|\(remoteID)|longhair|-1|2", "WK1|\(remoteID)|longhair|9223372036854775808|2",
                     "WK1|\(remoteID)|longhair|1|2\n", valid + String(repeating: "0", count: 129)] {
@@ -54,10 +56,13 @@ import AppKit
         fatalError("Settings tabs missing")
     }
     precondition(tabs.selectedSegment == 0, "Settings must start on pet tab")
+    settingsView.layoutSubtreeIfNeeded()
+    let skinButtons = descendants(settingsView).compactMap { $0 as? NSButton }.filter { $0.identifier?.rawValue.hasPrefix("pixel-") == true }
+    precondition(skinButtons.count == 14 && skinButtons.allSatisfy { settingsView.bounds.contains(settingsView.convert($0.bounds, from: $0)) })
     tabs.selectedSegment = 1
     tabs.sendAction(tabs.action, to: tabs.target)
-    let firstPeer = LocalPeers.Peer(skin: "longhair", keys: 12_345, clicks: 100_000_000, seen: 10)
-    settings.refresh(skinID: "tricolor", scale: 1, showLabels: true, clickThrough: false,
+    let firstPeer = LocalPeers.Peer(skin: "pixel-longhair-gold-white", keys: 12_345, clicks: 100_000_000, seen: 10)
+    settings.refresh(skinID: "pixel-tricolor", scale: 1, showLabels: true, clickThrough: false,
                      hideForSogou: true, networking: true, keys: 98_765, clicks: 3,
                      peers: [(remoteID, firstPeer)], networkStatus: "连接中", roomCode: invite, roomConnected: false, nickname: "")
     settingsView.layoutSubtreeIfNeeded()
@@ -72,7 +77,7 @@ import AppKit
         fatalError("Nickname editor missing")
     }
     nameInput.stringValue = "未保存的草稿"
-    settings.refresh(skinID: "tricolor", scale: 1, showLabels: true, clickThrough: false,
+    settings.refresh(skinID: "pixel-tricolor", scale: 1, showLabels: true, clickThrough: false,
                      hideForSogou: true, networking: true, keys: 98_766, clicks: 3,
                      peers: [(remoteID, firstPeer)], networkStatus: "连接中", roomCode: invite, roomConnected: false, nickname: "")
     precondition(nameInput.stringValue == "未保存的草稿", "Refresh replaced nickname draft")
@@ -85,12 +90,12 @@ import AppKit
     }
     let leaveBounds = settingsView.convert(leave.bounds, from: leave)
     precondition(settingsView.bounds.contains(leaveBounds), "Room controls outside settings view")
-    settings.refresh(skinID: "tricolor", scale: 1, showLabels: true, clickThrough: false,
+    settings.refresh(skinID: "pixel-tricolor", scale: 1, showLabels: true, clickThrough: false,
                      hideForSogou: true, networking: true, keys: 98_765, clicks: 3,
                      peers: [], networkStatus: "已连接", roomCode: invite, roomConnected: true, nickname: "")
     let nextTexts = visibleText()
     precondition(nextTexts.contains { $0.stringValue == "房间已连接 · 伙伴 0" })
-    precondition(!nextTexts.contains { $0.stringValue == "长毛猪 · bbbb" })
+    precondition(!nextTexts.contains { $0.stringValue == "像素长毛黄白 · bbbb" })
     print("Verified settings tab, room state and peer refresh")
     let size = NSRect(x: 0, y: 0, width: 400, height: 308)
     let window = NSWindow(contentRect: size, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -111,7 +116,7 @@ import AppKit
     var idleFrames = Set<Data>()
     let root = Bundle.main.resourceURL!
     for skin in PetSkin.all {
-        for file in [skin.body, skin.paw, skin.id + "-eyes.png", "keyboard.png", "mouse.png"] {
+        for file in [skin.body, skin.paw, "keyboard.png", "mouse.png"] {
             precondition(NSImage(contentsOf: root.appendingPathComponent(file)) != nil, "Missing sprite: \(file)")
         }
         view.selectSkin(skin.id)
@@ -119,7 +124,7 @@ import AppKit
         precondition(idleFrames.insert(idle).inserted, "Identical appearance: \(skin.id)")
         print("Rendered \(skin.id)")
     }
-    view.selectSkin("californian")
+    view.selectSkin("pixel-californian")
     let idle = snapshot()
     view.pressKey(0) // ANSI A
     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.075))
@@ -147,5 +152,9 @@ import AppKit
         if snapshot() != parked { closed = true } else if closed { reopened = true }
     }
     precondition(reopened, "Idle pet did not blink and reopen its eyes")
+    let beforeScroll = snapshot()
+    view.scrollMouse(-120)
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.09))
+    precondition(snapshot() != beforeScroll, "Mouse wheel did not animate")
     print("Verified all skins, keyboard/mouse animation and idle blinking")
 }

@@ -257,8 +257,8 @@ namespace WheekKeys
                 if (fields[0] == "WS1")
                 {
                     if (fields[3] != "0" && fields[3] != "1") return;
-                    PetSkin exact = PetSkin.FromId(fields[2]);
-                    if (exact.Id == fields[2]) { existing.Skin = exact; existing.HasAppearance = true; }
+                    PetSkin exact = PetSkin.Find(fields[2]);
+                    if (exact != null) { existing.Skin = exact; existing.HasAppearance = true; }
                     existing.SupportsActivity = true;
                     existing.SharingActivity = fields[3] == "1";
                     if (!existing.SharingActivity) existing.Actions.Clear();
@@ -280,9 +280,9 @@ namespace WheekKeys
             if (fields.Length != 5 || fields[0] != "WK1") return;
             string id = fields[1];
             if (id == session || !ValidId(id)) return;
-            PetSkin skin = PetSkin.FromId(fields[2]);
+            PetSkin skin = PetSkin.Find(fields[2]);
             long keys, clicks;
-            if (skin.Id != fields[2] || !TryCount(fields[3], out keys) || !TryCount(fields[4], out clicks)) return;
+            if (skin == null || !TryCount(fields[3], out keys) || !TryCount(fields[4], out clicks)) return;
             Peer peer;
             if (!peers.TryGetValue(id, out peer))
             {

@@ -51,7 +51,6 @@ final class PetView: NSView {
         }
     }
     private static let keyboardBounds = CGRect(x: 86, y: 197, width: 279.84, height: 86.24)
-    private static let limbOutline = NSColor(calibratedRed: 81 / 255, green: 58 / 255, blue: 39 / 255, alpha: 1).cgColor
     private static func makeKeys() -> [Key] {
         guard let url = Bundle.main.resourceURL?.appendingPathComponent("keyboard-layout.txt") else {
             fatalError("缺少 keyboard-layout.txt 资源。")
@@ -92,15 +91,12 @@ final class PetView: NSView {
         .font: NSFont.boldSystemFont(ofSize: 16),
         .foregroundColor: NSColor(calibratedRed: 78/255, green: 53/255, blue: 30/255, alpha: 1)
     ]
-    private static let mirroredGaze = [0, 2, 1, 3, 4, 6, 5, 8, 7]
     private let left = Stroke(CGPoint(x: 172, y: 215))
     private let right = Stroke(CGPoint(x: 215, y: 213))
     private var skin = PetSkin.all[0]
-    private var furColor = NSColor(calibratedRed: 250 / 255, green: 228 / 255, blue: 203 / 255, alpha: 1).cgColor
     private var images: [String: CGImage] = [:]
     private var mouseFrames: [CGImage]?
     private var keyboardArtwork: CGImage?
-    private var eyeFrames: [String: [CGImage]] = [:]
     private var timer: Timer?
     private var blinkTimer: Timer?
     private var blinkStarted: TimeInterval?
@@ -112,6 +108,8 @@ final class PetView: NSView {
     private var lastFrame: TimeInterval = 0
     private var lastMouseUse: TimeInterval = -.infinity
     private var lastClick: TimeInterval = -.infinity
+    private var lastScroll: TimeInterval = -.infinity
+    private var scrollDirection: CGFloat = 0
     private var mousePosition = CGPoint(x: 74, y: 234)
     private var mouseDestination = CGPoint(x: 74, y: 234)
     private var mouseGrip: CGFloat = 0
@@ -159,11 +157,6 @@ final class PetView: NSView {
     }
     func selectSkin(_ id: String) {
         skin = PetSkin.named(id)
-        furColor = skin.id == "teddy"
-            ? NSColor(calibratedRed: 168 / 255, green: 105 / 255, blue: 70 / 255, alpha: 1).cgColor
-            : skin.id == "silver-agouti"
-                ? NSColor(calibratedRed: 161 / 255, green: 144 / 255, blue: 134 / 255, alpha: 1).cgColor
-                : NSColor(calibratedRed: 250 / 255, green: 228 / 255, blue: 203 / 255, alpha: 1).cgColor
         needsDisplay = true
     }
     func pressKey(_ keyCode: UInt16) {
@@ -179,6 +172,7 @@ final class PetView: NSView {
         }
         lastMouseUse = -.infinity
         lastClick = -.infinity
+        lastScroll = -.infinity
         hand.start = start
         hand.target = key.center
         hand.started = when
@@ -225,6 +219,14 @@ final class PetView: NSView {
         let now = ProcessInfo.processInfo.systemUptime
         lastMouseUse = now
         lastClick = now + (1 - mouseGrip) * 0.110
+        wake(now)
+    }
+    func scrollMouse(_ delta: Int64) {
+        guard delta != 0 else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        scrollDirection = delta > 0 ? 1 : -1
+        lastScroll = now
+        lastMouseUse = now
         wake(now)
     }
     private func wake(_ now: TimeInterval) {
@@ -283,7 +285,7 @@ final class PetView: NSView {
     private func currentPose(_ now: TimeInterval) -> Pose {
         var lp = left.position(now), rp = right.position(now)
         let grip = smooth(mouseGrip)
-        var lean = max(-78, min(115, ((lp.x - left.rest.x) + (rp.x - right.rest.x)) * 0.84))
+        var lean = max(-78, min(90, ((lp.x - left.rest.x) + (rp.x - right.rest.x)) * 0.84))
         lean += (mousePosition.x - 8 - 135 - lean) * grip
         let reachY = max(0, max(lp.y - left.rest.y, rp.y - right.rest.y))
         let dip = min(19, reachY * 0.42) * (1 - grip) + (12 + (mousePosition.y - 226) * 0.45) * grip
@@ -295,11 +297,12 @@ final class PetView: NSView {
         let brace = CGPoint(x: 153, y: 227)
         rp = mix(rp, brace, grip * right.restWeight(now))
         let press = contact(now - lastClick)
+        let scroll = CGFloat(max(0, 1 - (now - lastScroll) / 0.245))
         let mouseTip = CGPoint(x: mousePosition.x + 5.5 + (rightButton ? -11 : -1) * press,
-                               y: mousePosition.y + 2.5 + (rightButton ? -1 : 3.2) * press)
+                               y: mousePosition.y + 2.5 + (rightButton ? -1 : 3.2) * press - 11 * scrollDirection * scroll)
         lp = mix(lp, mouseTip, grip)
         lp.y -= sin(grip * .pi) * 5
-        return Pose(body: CGRect(x: 135 + lean, y: 123 + dip, width: 129, height: 85),
+        return Pose(body: CGRect(x: 126 + lean.rounded(), y: 39 + dip.rounded(), width: 174, height: 181),
                     leftTip: lp, rightTip: rp)
     }
     private func keyInfo(_ code: UInt16) -> Key {
@@ -330,24 +333,6 @@ final class PetView: NSView {
         ctx.scaleBy(x: 1, y: -1)
         ctx.draw(image, in: CGRect(x: 0, y: 0, width: rect.width, height: rect.height))
         ctx.restoreGState()
-    }
-    private func eyeImage(_ frame: Int) -> CGImage? {
-        guard frame >= 0 && frame < 12 else { return nil }
-        let id = skin.id
-        if eyeFrames[id] == nil {
-            guard let atlas = image("\(id)-eyes.png"), atlas.width % 4 == 0,
-                  atlas.height % 3 == 0 else { return nil }
-            let width = atlas.width / 4, height = atlas.height / 3
-            var frames: [CGImage] = []
-            for index in 0..<12 {
-                let rect = CGRect(x: (index % 4) * width, y: (index / 4) * height,
-                                  width: width, height: height)
-                guard let cropped = atlas.cropping(to: rect) else { return nil }
-                frames.append(cropped)
-            }
-            eyeFrames[id] = frames
-        }
-        return eyeFrames[id]?[frame]
     }
     private func mouseImage(_ frame: Int) -> CGImage? {
         if mouseFrames == nil {
@@ -389,6 +374,11 @@ final class PetView: NSView {
         let r = right.active ? contact(now - right.started) : 0
         let press = contact(now - lastClick) * smooth(mouseGrip)
         let mouseFrame = press > 0.32 ? (rightButton ? 2 : 1) : 0
+        let eyeFrame = blinkStarted.flatMap { Self.blinkFrame(elapsed: now - $0) } ?? (max(l, r) > 0.45 ? 10 : gazeFrame)
+        ctx.interpolationQuality = .none
+        sprite(skin.body, pose.body, ctx)
+        skin.drawEyes(in: pose.body, frame: eyeFrame, context: ctx)
+        ctx.interpolationQuality = .high
         drawKeyboard(ctx)
         if l > 0 { drawPressed(keyInfo(left.code), l, ctx) }
         if r > 0 { drawPressed(keyInfo(right.code), r, ctx) }
@@ -398,19 +388,6 @@ final class PetView: NSView {
         }
         drawPaw(pose.rightTip, pose.body, true, ctx)
         drawPaw(pose.leftTip, pose.body, false, ctx)
-        ctx.saveGState()
-        ctx.translateBy(x: 2 * pose.body.midX, y: 0)
-        ctx.scaleBy(x: -1, y: 1)
-        sprite(skin.body, pose.body, ctx)
-        let gaze = Self.mirroredGaze[gazeFrame]
-        let eyeFrame = blinkStarted.flatMap { Self.blinkFrame(elapsed: now - $0) } ?? (max(l, r) > 0.45 ? 10 : gaze)
-        if let eyes = eyeImage(eyeFrame) {
-            let eyeRect = CGRect(x: pose.body.minX + pose.body.width * 0.58,
-                                 y: pose.body.minY + pose.body.height * 0.25,
-                                 width: pose.body.width * 0.22, height: pose.body.height * 0.30)
-            drawImage(eyes, eyeRect, ctx)
-        }
-        ctx.restoreGState()
         if showKeyLabels {
             drawBubble(left, now, false, pose.body, ctx)
             drawBubble(right, now, true, pose.body, ctx)
@@ -436,9 +413,9 @@ final class PetView: NSView {
     }
     private func drawPaw(_ tip: CGPoint, _ chest: CGRect, _ far: Bool, _ ctx: CGContext) {
         let grip = far ? CGFloat(0) : smooth(mouseGrip)
-        let anchorX = chest.minX + (far ? 75 : 36)
+        let anchorX = chest.minX + (far ? 89 : 46)
         let shoulder = CGPoint(x: anchorX + max(-13, min(13, (tip.x - anchorX) * 0.30)),
-                               y: chest.minY + 63)
+                               y: chest.minY + 153)
         let reachX = tip.x - shoulder.x, reachY = tip.y - shoulder.y
         var angle = max(-0.58, min(0.58, -atan2(reachX, reachY)))
         angle += (0.52 - angle) * grip
@@ -459,8 +436,8 @@ final class PetView: NSView {
                               control: CGPoint(x: bend.x + normal.x * 5.5, y: bend.y + normal.y * 5.5))
             path.closeSubpath()
             ctx.addPath(path)
-            ctx.setFillColor(furColor)
-            ctx.setStrokeColor(Self.limbOutline)
+            ctx.setFillColor(skin.furColor)
+            ctx.setStrokeColor(skin.inkColor)
             ctx.setLineWidth(1.05)
             ctx.drawPath(using: .fillStroke)
         }
@@ -472,6 +449,7 @@ final class PetView: NSView {
         ctx.translateBy(x: tip.x, y: tip.y)
         ctx.rotate(by: angle)
         if far { ctx.scaleBy(x: -1, y: 1) }
+        ctx.interpolationQuality = .none
         drawImage(paw, CGRect(x: -width / 2, y: -15 + sideScale * 2,
                               width: width, height: height), ctx)
         ctx.restoreGState()

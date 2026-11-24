@@ -157,7 +157,7 @@ final class LocalPeers {
     private func packet() -> String? {
         guard let values = payload?() else { return nil }
         let (skin, keys, clicks) = values
-        return "WK1|\(session)|\(skin)|\(keys)|\(clicks)"
+        return "WK1|\(session)|\(PetSkin.named(skin).networkID)|\(keys)|\(clicks)"
     }
 
     static func parse(bytes: [UInt8], ownID: String, now: TimeInterval) -> (String, Peer)? {
@@ -165,13 +165,13 @@ final class LocalPeers {
         let fields = message.split(separator: "|", omittingEmptySubsequences: false)
         guard fields.count == 5, fields[0] == "WK1", fields[1].count == 32,
               fields[1].utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
-              fields[1] != ownID, PetSkin.all.contains(where: { $0.id == fields[2] }),
+              fields[1] != ownID, let skin = PetSkin.find(String(fields[2])),
               !fields[3].isEmpty, !fields[4].isEmpty,
               fields[3].utf8.allSatisfy({ (48...57).contains($0) }),
               fields[4].utf8.allSatisfy({ (48...57).contains($0) }),
               let keys = UInt64(fields[3]), keys <= UInt64(Int64.max),
               let clicks = UInt64(fields[4]), clicks <= UInt64(Int64.max) else { return nil }
-        return (String(fields[1]), Peer(skin: String(fields[2]), keys: keys, clicks: clicks, seen: now))
+        return (String(fields[1]), Peer(skin: skin.id, keys: keys, clicks: clicks, seen: now))
     }
 
     static func unexpired(_ peers: [String: Peer], now: TimeInterval, expiry: TimeInterval = 8) -> [String: Peer] {
