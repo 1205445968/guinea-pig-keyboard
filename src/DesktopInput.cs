@@ -9,6 +9,8 @@ namespace WheekKeys
     internal sealed class DesktopInput : IDisposable
     {
         private const int WmInput = 0x00FF;
+        private const int WmInputDeviceChange = 0x00FE;
+        private const uint RidevDeviceNotify = 0x00002000;
         private const uint RidInput = 0x10000003;
         private const uint RidevRemove = 0x00000001;
         private const uint RidevInputSink = 0x00000100;
@@ -26,14 +28,15 @@ namespace WheekKeys
         private static readonly uint InputSize = (uint)Marshal.SizeOf(typeof(RawInput));
 
         private readonly HwndSource source;
-        private readonly Action<int> keyPressed;
+        private readonly Action<int, bool> keyPressed;
         private readonly Action<bool> mousePressed;
         private readonly Action<double, double> mouseMoved;
         private readonly Dictionary<IntPtr, AbsolutePosition> absolutePositions = new Dictionary<IntPtr, AbsolutePosition>();
+        private readonly Dictionary<IntPtr, HashSet<int>> heldKeys = new Dictionary<IntPtr, HashSet<int>>();
         private readonly HwndSourceHook hook;
         private bool disposed;
 
-        public DesktopInput(HwndSource source, Action<int> keyPressed, Action<bool> mousePressed, Action<double, double> mouseMoved)
+        public DesktopInput(HwndSource source, Action<int, bool> keyPressed, Action<bool> mousePressed, Action<double, double> mouseMoved)
         {
             if (source == null) throw new ArgumentNullException("source");
             if (keyPressed == null) throw new ArgumentNullException("keyPressed");
@@ -48,7 +51,7 @@ namespace WheekKeys
             this.mouseMoved = mouseMoved;
             hook = WndProc;
             source.AddHook(hook);
-            RawInputDevice[] devices = CreateDevices(RidevInputSink, source.Handle);
+            RawInputDevice[] devices = CreateDevices(RidevInputSink | RidevDeviceNotify, source.Handle);
             if (!RegisterRawInputDevices(devices, (uint)devices.Length, (uint)Marshal.SizeOf(typeof(RawInputDevice))))
             {
                 int error = Marshal.GetLastWin32Error();
@@ -70,6 +73,11 @@ namespace WheekKeys
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
+            if (msg == WmInputDeviceChange && wParam.ToInt32() == 2)
+            {
+                heldKeys.Remove(lParam);
+                absolutePositions.Remove(lParam);
+            }
             if (msg != WmInput || disposed) return IntPtr.Zero;
 
             uint size = InputSize;
@@ -78,14 +86,7 @@ namespace WheekKeys
             if (received == UInt32.MaxValue || received < HeaderSize) return IntPtr.Zero;
             if (input.Header.Type == RimTypeKeyboard && received >= HeaderSize + 16)
             {
-                RawKeyboard keyboard = input.Data.Keyboard;
-                if ((keyboard.Flags & RiKeyBreak) == 0 && keyboard.MakeCode != 0 &&
-                    keyboard.MakeCode != 0xFF && keyboard.VKey != 0xFF)
-                {
-                    int scan = keyboard.MakeCode;
-                    if ((keyboard.Flags & (RiKeyE0 | RiKeyE1)) != 0) scan |= 0x100;
-                    keyPressed(scan);
-                }
+                ProcessKeyboard(input.Header.Device, input.Data.Keyboard);
             }
             else if (input.Header.Type == RimTypeMouse && received >= HeaderSize + 24)
             {
@@ -96,6 +97,22 @@ namespace WheekKeys
                 if ((buttons & RiMouseRightButtonDown) != 0) mousePressed(true);
             }
             return IntPtr.Zero;
+        }
+
+        private void ProcessKeyboard(IntPtr device, RawKeyboard keyboard)
+        {
+            if (keyboard.MakeCode == 0xFF || keyboard.VKey == 0xFF) return;
+            // Media keys can have a virtual key but no scan code.
+            if (keyboard.MakeCode == 0 && keyboard.VKey == 0) return;
+            int scan = keyboard.MakeCode;
+            if ((keyboard.Flags & (RiKeyE0 | RiKeyE1)) != 0) scan |= 0x100;
+            int key = keyboard.MakeCode == 0 ? 0x400 + keyboard.VKey :
+                ((keyboard.Flags & RiKeyE1) != 0 ? 0x200 + keyboard.MakeCode : scan);
+            HashSet<int> held;
+            if (!heldKeys.TryGetValue(device, out held))
+                heldKeys.Add(device, held = new HashSet<int>());
+            if ((keyboard.Flags & RiKeyBreak) != 0) held.Remove(key);
+            else keyPressed(scan, held.Add(key));
         }
 
         private void ProcessMouse(IntPtr device, RawMouse mouse)

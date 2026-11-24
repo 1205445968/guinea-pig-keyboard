@@ -5,6 +5,8 @@ final class PetSettingsViewController: NSViewController {
     var onScaleChange: ((Double) -> Void)?
     var onShowLabelsChange: ((Bool) -> Void)?
     var onClickThroughChange: ((Bool) -> Void)?
+    var onHideForSogouChange: ((Bool) -> Void)?
+    var onNetworkingChange: ((Bool) -> Void)?
     var onReturnToCorner: (() -> Void)?
     var onQuit: (() -> Void)?
     var onClose: (() -> Void)?
@@ -14,13 +16,19 @@ final class PetSettingsViewController: NSViewController {
     private let labelsSwitch = NSButton(checkboxWithTitle: "显示按键气泡", target: nil, action: nil)
     private let clickThroughSwitch = NSButton(checkboxWithTitle: "鼠标穿透", target: nil, action: nil)
 
+    private let sogouSwitch = NSButton(checkboxWithTitle: "使用搜狗输入法时自动隐藏", target: nil, action: nil)
+    private let networkSwitch = NSButton(checkboxWithTitle: "开启局域网联机（本次启动）", target: nil, action: nil)
+    private let totals = NSTextField(labelWithString: "")
+    private let peerText = NSTextView()
+    private var networkError = ""
+
     private let paper = NSColor(calibratedRed: 250 / 255, green: 246 / 255, blue: 235 / 255, alpha: 1)
     private let darkBrown = NSColor(calibratedRed: 77 / 255, green: 54 / 255, blue: 39 / 255, alpha: 1)
     private let mutedBrown = NSColor(calibratedRed: 143 / 255, green: 119 / 255, blue: 94 / 255, alpha: 1)
     private let sage = NSColor(calibratedRed: 224 / 255, green: 235 / 255, blue: 216 / 255, alpha: 1)
 
     override func loadView() {
-        let root = SettingsCardView(frame: NSRect(x: 0, y: 0, width: 316, height: 344))
+        let root = SettingsCardView(frame: NSRect(x: 0, y: 0, width: 316, height: 545))
         root.appearance = NSAppearance(named: .aqua)
         root.wantsLayer = true
         root.layer?.backgroundColor = paper.cgColor
@@ -95,18 +103,51 @@ final class PetSettingsViewController: NSViewController {
         clickThroughSwitch.contentTintColor = darkBrown
         add(clickThroughSwitch, x: 18, top: 243, width: 270, height: 22, to: root)
 
+        sogouSwitch.target = self
+        sogouSwitch.action = #selector(toggleSogou(_:))
+        sogouSwitch.font = .systemFont(ofSize: 12)
+        add(sogouSwitch, x: 18, top: 274, width: 280, height: 22, to: root)
+        networkSwitch.target = self
+        networkSwitch.action = #selector(toggleNetworking(_:))
+        networkSwitch.font = .systemFont(ofSize: 12)
+        add(networkSwitch, x: 18, top: 305, width: 280, height: 22, to: root)
+        totals.font = .systemFont(ofSize: 12, weight: .medium)
+        totals.textColor = darkBrown
+        add(totals, x: 18, top: 335, width: 280, height: 22, to: root)
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        peerText.frame = NSRect(x: 0, y: 0, width: 264, height: 108)
+        peerText.isVerticallyResizable = true
+        peerText.textContainer?.widthTracksTextView = true
+        peerText.isEditable = false
+        peerText.isSelectable = false
+        peerText.drawsBackground = false
+        peerText.font = .systemFont(ofSize: 12)
+        peerText.textColor = darkBrown
+        scroll.documentView = peerText
+        add(scroll, x: 18, top: 360, width: 280, height: 108, to: root)
+
         let divider = NSBox()
         divider.boxType = .separator
-        add(divider, x: 18, top: 277, width: 280, height: 1, to: root)
+        add(divider, x: 18, top: 478, width: 280, height: 1, to: root)
 
         let corner = footerButton("回到右下角", action: #selector(returnToCorner))
-        add(corner, x: 18, top: 294, width: 172, height: 32, to: root)
+        add(corner, x: 18, top: 495, width: 172, height: 32, to: root)
         let quit = footerButton("退出", action: #selector(quitApp))
         quit.contentTintColor = NSColor(calibratedRed: 155 / 255, green: 79 / 255, blue: 63 / 255, alpha: 1)
-        add(quit, trailing: 18, top: 294, width: 96, height: 32, to: root)
+        add(quit, trailing: 18, top: 495, width: 96, height: 32, to: root)
     }
 
-    func refresh(skinID: String, scale: Double, showLabels: Bool, clickThrough: Bool) {
+    func refresh(skinID: String, scale: Double, showLabels: Bool, clickThrough: Bool,
+                 hideForSogou: Bool, networking: Bool, keys: UInt64, clicks: UInt64, peers: [String], networkStatus: String) {
+        sogouSwitch.state = hideForSogou ? .on : .off
+        networkSwitch.state = networking ? .on : .off
+        totals.stringValue = "本机累计　按键 \(keys)　点击 \(clicks)"
+        let peerRows = peers.isEmpty ? "等待局域网伙伴…" : peers.joined(separator: "\n")
+        let offline = networkError.isEmpty ? "开启后，同一局域网的伙伴可以看到你的毛色和累计次数。" : networkError
+        let summary = networking ? (networkStatus.isEmpty ? peerRows : networkStatus + "\n" + peerRows) : offline
+        if peerText.string != summary { peerText.string = summary }
         scaleValue.stringValue = "\(Int((scale * 100).rounded()))%"
         labelsSwitch.state = showLabels ? .on : .off
         clickThroughSwitch.state = clickThrough ? .on : .off
@@ -130,6 +171,12 @@ final class PetSettingsViewController: NSViewController {
     @objc private func increaseScale() { onScaleChange?(0.1) }
     @objc private func toggleLabels(_ sender: NSButton) { onShowLabelsChange?(sender.state == .on) }
     @objc private func toggleClickThrough(_ sender: NSButton) { onClickThroughChange?(sender.state == .on) }
+    func setNetworkError(_ message: String) { networkError = message }
+    @objc private func toggleSogou(_ sender: NSButton) { onHideForSogouChange?(sender.state == .on) }
+    @objc private func toggleNetworking(_ sender: NSButton) {
+        networkError = ""
+        onNetworkingChange?(sender.state == .on)
+    }
     @objc private func returnToCorner() { onReturnToCorner?() }
     @objc private func quitApp() { onQuit?() }
     @objc private func closePanel() { onClose?() }
@@ -147,7 +194,7 @@ final class PetSettingsViewController: NSViewController {
         case "californian":
             base = NSColor(calibratedRed: 244/255, green: 230/255, blue: 211/255, alpha: 1)
             patches = [NSColor(calibratedRed: 79/255, green: 61/255, blue: 54/255, alpha: 1)]
-        case "gold-white":
+        case "gold-white", "longhair":
             base = NSColor(calibratedRed: 250/255, green: 247/255, blue: 237/255, alpha: 1)
             patches = [NSColor(calibratedRed: 218/255, green: 165/255, blue: 91/255, alpha: 1)]
         case "teddy":

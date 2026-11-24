@@ -31,13 +31,18 @@ namespace WheekKeys
         private readonly PetWindow owner;
         private readonly Dictionary<string, Button> skinButtons = new Dictionary<string, Button>();
         private readonly TextBlock sizeValue;
+        private readonly TextBlock localTotals = new TextBlock { Foreground = Ink, FontSize = 12, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap };
+        private readonly TextBlock peerSummary = new TextBlock { Foreground = Muted, FontSize = 11, TextWrapping = TextWrapping.Wrap };
+        private readonly ToggleButton networkSwitch;
+        private bool refreshingActivity;
+        private bool closing;
 
         public PetSettings(PetWindow owner)
         {
             this.owner = owner;
             Title = "豚鼠键盘设置";
             Width = 286;
-            Height = 372;
+            Height = 528;
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
             Background = Brushes.Transparent;
@@ -94,9 +99,26 @@ namespace WheekKeys
             AutomationProperties.SetName(passthrough, "鼠标穿透");
             toggles.Children.Add(BuildToggleRow("按键气泡", labels));
             toggles.Children.Add(BuildToggleRow("鼠标穿透", passthrough));
+            ToggleButton sogou = MakeSwitch(owner.HideForSogou, owner.SetHideForSogou);
+            AutomationProperties.SetName(sogou, "使用搜狗输入法时自动隐藏");
+            toggles.Children.Add(BuildToggleRow("使用搜狗输入法时自动隐藏", sogou));
             body.Children.Add(toggles);
-            Grid.SetRow(body, 1);
-            layout.Children.Add(body);
+
+            StackPanel activity = BuildSection("计数与联机");
+            activity.Children.Add(localTotals);
+            networkSwitch = MakeSwitch(owner.Networking, delegate(bool enabled)
+            {
+                if (refreshingActivity) return;
+                owner.SetNetworking(enabled);
+                RefreshActivity();
+            });
+            AutomationProperties.SetName(networkSwitch, "局域网联机");
+            activity.Children.Add(BuildToggleRow("局域网联机", networkSwitch));
+            activity.Children.Add(peerSummary);
+            body.Children.Add(activity);
+            ScrollViewer scroll = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            Grid.SetRow(scroll, 1);
+            layout.Children.Add(scroll);
 
             Grid footer = BuildFooter();
             Grid.SetRow(footer, 2);
@@ -119,9 +141,21 @@ namespace WheekKeys
             {
                 if (e.Key == Key.Escape) { Close(); e.Handled = true; }
             };
-            Deactivated += delegate { Close(); };
+            Closing += delegate { closing = true; };
+            Deactivated += delegate { if (!closing) Close(); };
             Closed += delegate { owner.SettingsClosed(this); };
             RefreshState();
+            RefreshActivity();
+        }
+
+        internal void RefreshActivity()
+        {
+            refreshingActivity = true;
+            networkSwitch.IsChecked = owner.Networking;
+            refreshingActivity = false;
+            localTotals.Text = owner.LocalTotals;
+            string summary = owner.PeerSummary;
+            peerSummary.Text = summary.Length == 0 ? "开启后，同一局域网的伙伴可以看到你的毛色和累计次数。" : summary;
         }
 
         internal void PlaceAt(double left, double top)
@@ -201,6 +235,7 @@ namespace WheekKeys
                 case "californian": baseColor = Color.FromRgb(248, 240, 220); patch = Color.FromRgb(119, 87, 62); break;
                 case "gold-white": baseColor = Color.FromRgb(220, 164, 91); patch = Color.FromRgb(255, 247, 227); break;
                 case "teddy": baseColor = Color.FromRgb(201, 164, 121); break;
+                case "longhair": baseColor = Color.FromRgb(253, 228, 191); patch = Color.FromRgb(222, 172, 98); break;
                 default: baseColor = Color.FromRgb(157, 151, 139); break;
             }
             Grid swatch = new Grid { Width = 14, Height = 14, ClipToBounds = true };

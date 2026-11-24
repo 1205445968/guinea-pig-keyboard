@@ -25,7 +25,7 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$work/WheekKeys.iconset" -o "$app/Contents/Resources/WheekKeys.icns"
 for arch in arm64 x86_64; do
-  xcrun swiftc -swift-version 5 -parse-as-library -O -target "$arch-apple-macos11.0" macos/main.swift macos/PetView.swift macos/PetSettings.swift macos/SmokeTest.swift -o "$work/WheekKeys-$arch"
+  xcrun swiftc -swift-version 5 -parse-as-library -O -target "$arch-apple-macos11.0" macos/main.swift macos/PetView.swift macos/PetSettings.swift macos/LocalPeers.swift macos/SmokeTest.swift -o "$work/WheekKeys-$arch"
 done
 lipo -create "$work/WheekKeys-arm64" "$work/WheekKeys-x86_64" -output "$app/Contents/MacOS/WheekKeys"
 chmod 755 "$app/Contents/MacOS/WheekKeys"

@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon
 
 struct PetSkin {
     let id: String
@@ -12,7 +13,8 @@ struct PetSkin {
         PetSkin(id: "californian", name: "白加州", body: "californian-body.png", paw: "californian-paw.png"),
         PetSkin(id: "gold-white", name: "黄白英短", body: "gold-white-body.png", paw: "gold-white-paw.png"),
         PetSkin(id: "teddy", name: "美泰", body: "teddy-body.png", paw: "teddy-paw.png"),
-        PetSkin(id: "silver-agouti", name: "雕灰", body: "silver-agouti-body.png", paw: "silver-agouti-paw.png")
+        PetSkin(id: "silver-agouti", name: "雕灰", body: "silver-agouti-body.png", paw: "silver-agouti-paw.png"),
+        PetSkin(id: "longhair", name: "长毛猪", body: "longhair-body.png", paw: "longhair-paw.png")
     ]
 
     static func named(_ id: String) -> PetSkin {
@@ -38,6 +40,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private var scale = 1.0
     private var clickThrough = false
     private var showLabels = true
+    private var hideForSogou = true
+    private var manuallyHidden = false
+    private var sogouActive = false
+    private var inputTimer: Timer?
+    private var heldModifiers = Set<UInt16>()
+    private var countsDirty = false
+    private var keyCount: UInt64 = 0
+    private var clickCount: UInt64 = 0
+    private let peers = LocalPeers()
     private let baseSize = NSSize(width: 310, height: 238.7)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -47,6 +58,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         scale = savedScale > 0 ? min(2.0, max(0.5, savedScale)) : 1.0
         clickThrough = defaults.bool(forKey: "clickThrough")
         showLabels = defaults.object(forKey: "showKeyLabels") as? Bool ?? true
+        hideForSogou = defaults.object(forKey: "hideForSogou") as? Bool ?? true
+        keyCount = min(UInt64(Int64.max), UInt64(defaults.string(forKey: "keyCount") ?? "0") ?? 0)
+        clickCount = min(UInt64(Int64.max), UInt64(defaults.string(forKey: "clickCount") ?? "0") ?? 0)
 
         let size = NSSize(width: baseSize.width * scale, height: baseSize.height * scale)
         let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -71,7 +85,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         pet.showKeyLabels = showLabels
         pet.onOpenSettings = { [weak self] in self?.showSettings() }
         window.contentView = pet
-        window.orderFrontRegardless()
+        updateVisibility()
+        updateInputSource()
+        let inputTimer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.updateInputSource()
+            self.flushCounts()
+            if self.settingsPopover?.isShown == true { self.refreshSettings() }
+        }
+        self.inputTimer = inputTimer
+        RunLoop.main.add(inputTimer, forMode: .common)
+        peers.payload = { [weak self] in
+            guard let self = self else { return ("tricolor", 0, 0) }
+            return (self.skinID, self.keyCount, self.clickCount)
+        }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let url = Bundle.main.url(forResource: "avatar", withExtension: "png"),
@@ -90,7 +117,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
 
     func applicationWillTerminate(_ notification: Notification) {
         savePosition()
+        flushCounts()
         stopEventTap()
+        inputTimer?.invalidate()
+        peers.stop()
     }
 
     func windowDidMove(_ notification: Notification) { savePosition() }
@@ -129,7 +159,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         add("缩小", #selector(shrink), to: menu)
         add("显示按键文字", #selector(toggleLabels), to: menu, state: showLabels)
         add(clickThrough ? "关闭鼠标穿透" : "开启鼠标穿透", #selector(toggleClickThrough), to: menu, state: clickThrough)
-        add(window.isVisible ? "隐藏桌宠" : "显示桌宠", #selector(toggleVisible), to: menu)
+        add(manuallyHidden ? "显示桌宠" : "隐藏桌宠", #selector(toggleVisible), to: menu)
         menu.addItem(.separator())
         if CGPreflightListenEventAccess() {
             let item = NSMenuItem(title: eventTap == nil ? "输入监听未启动，请检查权限或重启应用" : "输入监控已授权", action: nil, keyEquivalent: "")
@@ -181,10 +211,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
     private func showSettings(anchor: NSView? = nil) {
         if settingsPopover?.isShown == true { return }
-        let controller: PetSettingsViewController
-        if let existing = settingsController {
-            controller = existing
-        } else {
+        if settingsController == nil {
             let created = PetSettingsViewController()
             created.onSelectSkin = { [weak self] in self?.applySkin($0) }
             created.onScaleChange = { [weak self] delta in
@@ -199,6 +226,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 guard let self, self.clickThrough != value else { return }
                 self.toggleClickThrough()
             }
+            created.onHideForSogouChange = { [weak self] value in
+                guard let self = self else { return }
+                self.hideForSogou = value
+                self.defaults.set(value, forKey: "hideForSogou")
+                self.updateVisibility()
+                self.refreshSettings()
+            }
+            created.onNetworkingChange = { [weak self] value in
+                guard let self = self else { return }
+                if value {
+                    if !self.peers.start() { self.settingsController?.setNetworkError("联机启动失败，请检查端口") }
+                } else { self.peers.stop() }
+                self.refreshSettings()
+            }
             created.onReturnToCorner = { [weak self] in self?.returnToCorner() }
             created.onQuit = { [weak self] in self?.quit() }
             created.onClose = { [weak self] in self?.settingsPopover?.performClose(nil) }
@@ -209,9 +250,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             popover.contentViewController = created
             popover.contentSize = created.view.frame.size
             settingsPopover = popover
-            controller = created
         }
-        controller.refresh(skinID: skinID, scale: scale, showLabels: showLabels, clickThrough: clickThrough)
+        guard let controller = settingsController else { return }
+        refreshSettings()
         let source: NSView = anchor ?? pet
         settingsPopover?.show(relativeTo: source.bounds, of: source, preferredEdge: anchor == nil ? .maxY : .minY)
         if let popoverWindow = settingsPopover?.contentViewController?.view.window {
@@ -219,7 +260,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
     }
     private func refreshSettings() {
-        settingsController?.refresh(skinID: skinID, scale: scale, showLabels: showLabels, clickThrough: clickThrough)
+        let rows = peers.peers.sorted { $0.key < $1.key }.map { id, peer in
+            "\(PetSkin.named(peer.skin).name) · \(id.prefix(4))　按键 \(peer.keys)　点击 \(peer.clicks)"
+        }
+        settingsController?.refresh(skinID: skinID, scale: scale, showLabels: showLabels, clickThrough: clickThrough,
+                                    hideForSogou: hideForSogou, networking: peers.active,
+                                    keys: keyCount, clicks: clickCount, peers: rows, networkStatus: peers.status)
     }
     private func returnToCorner() {
         let screen = window.screen ?? NSScreen.main ?? NSScreen.screens[0]
@@ -228,7 +274,23 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         savePosition()
     }
     @objc private func toggleVisible() {
-        if window.isVisible { window.orderOut(nil) } else { window.orderFrontRegardless() }
+        manuallyHidden.toggle()
+        updateVisibility()
+    }
+    private func updateVisibility() {
+        let shouldShow = !manuallyHidden && !(hideForSogou && sogouActive)
+        if shouldShow && !window.isVisible { window.orderFrontRegardless() }
+        else if !shouldShow && window.isVisible { window.orderOut(nil) }
+    }
+    private func updateInputSource() {
+        guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return }
+        func property(_ key: CFString) -> String {
+            guard let raw = TISGetInputSourceProperty(source, key) else { return "" }
+            return Unmanaged<CFString>.fromOpaque(raw).takeUnretainedValue() as String
+        }
+        let value = (property(kTISPropertyInputSourceID) + " " + property(kTISPropertyLocalizedName)).lowercased()
+        sogouActive = value.contains("sogou") || value.contains("sougou") || value.contains("搜狗")
+        updateVisibility()
     }
     @objc private func requestInputPermission() {
         if CGRequestListenEventAccess() { startEventTap() } else { openInputSettings() }
@@ -242,7 +304,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
 
     private func startEventTap() {
         guard eventTap == nil else { return }
-        let types: [CGEventType] = [.keyDown, .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .leftMouseDown, .rightMouseDown]
+        let types: [CGEventType] = [.keyDown, .flagsChanged, .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .leftMouseDown, .rightMouseDown]
         let mask = types.reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
         let callback: CGEventTapCallBack = { _, type, event, info in
             guard let info = info else { return Unmanaged.passUnretained(event) }
@@ -267,16 +329,40 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         eventSource = nil
         eventTap = nil
     }
+    private func flushCounts() {
+        guard countsDirty else { return }
+        defaults.set(String(keyCount), forKey: "keyCount")
+        defaults.set(String(clickCount), forKey: "clickCount")
+        countsDirty = false
+    }
+    private func incrementKeyCount() {
+        keyCount = min(UInt64(Int64.max), keyCount + 1)
+        countsDirty = true
+    }
     private func handleEvent(_ type: CGEventType, _ event: CGEvent) {
         switch type {
         case .keyDown:
+            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                incrementKeyCount()
+            }
             pet.pressKey(UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode)))
+        case .flagsChanged:
+            let code = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
+            if code == 57 {
+                incrementKeyCount()
+            } else if [54, 55, 56, 58, 59, 60, 61, 62, 63].contains(code) {
+                if CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(code)) {
+                    if heldModifiers.insert(code).inserted { incrementKeyCount() }
+                } else { heldModifiers.remove(code) }
+            }
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
             let dx = Double(event.getIntegerValueField(.mouseEventDeltaX))
             let dy = Double(event.getIntegerValueField(.mouseEventDeltaY))
             pet.moveMouse(dx: dx, dy: dy)
-        case .leftMouseDown: pet.clickMouse(right: false)
-        case .rightMouseDown: pet.clickMouse(right: true)
+        case .leftMouseDown, .rightMouseDown:
+            clickCount = min(UInt64(Int64.max), clickCount + 1)
+            countsDirty = true
+            pet.clickMouse(right: type == .rightMouseDown)
         default: break
         }
     }

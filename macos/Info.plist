@@ -8,10 +8,11 @@
   <key>CFBundleExecutable</key><string>WheekKeys</string>
   <key>CFBundleIconFile</key><string>WheekKeys</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.3</string>
-  <key>CFBundleVersion</key><string>0.1.3</string>
+  <key>CFBundleShortVersionString</key><string>0.1.4</string>
+  <key>CFBundleVersion</key><string>0.1.4</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>LSUIElement</key><true/>
+  <key>NSLocalNetworkUsageDescription</key><string>用于发现局域网中的豚鼠伙伴并显示累计计数。</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>

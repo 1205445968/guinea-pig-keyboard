@@ -2,6 +2,23 @@ import AppKit
 
 // Runs against the packaged application on both Mac architectures in CI.
 @MainActor func runSmokeTest() {
+    let ownID = String(repeating: "a", count: 32)
+    let remoteID = String(repeating: "b", count: 32)
+    func parse(_ text: String) -> (String, LocalPeers.Peer)? {
+        LocalPeers.parse(bytes: Array(text.utf8), ownID: ownID, now: 10)
+    }
+    let valid = "WK1|\(remoteID)|longhair|123|45"
+    guard let parsed = parse(valid) else { fatalError("Valid peer packet rejected") }
+    precondition(parsed.0 == remoteID && parsed.1.keys == 123 && parsed.1.clicks == 45)
+    for invalid in ["WK1|\(ownID)|longhair|1|2", "WK1|\(remoteID)|unknown|1|2",
+                    "WK1|\(remoteID)|longhair|-1|2", "WK1|\(remoteID)|longhair|9223372036854775808|2",
+                    "WK1|\(remoteID)|longhair|1|2\n", valid + String(repeating: "0", count: 129)] {
+        precondition(parse(invalid) == nil, "Invalid peer packet accepted")
+    }
+    let peerMap = [parsed.0: parsed.1]
+    precondition(LocalPeers.unexpired(peerMap, now: 17.99).count == 1)
+    precondition(LocalPeers.unexpired(peerMap, now: 18).isEmpty)
+    print("Verified LAN packet validation and expiry")
     _ = NSApplication.shared
     let size = NSRect(x: 0, y: 0, width: 400, height: 308)
     let window = NSWindow(contentRect: size, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -58,5 +75,5 @@ import AppKit
         if snapshot() != parked { closed = true } else if closed { reopened = true }
     }
     precondition(reopened, "Idle pet did not blink and reopen its eyes")
-    print("Verified five skins, keyboard/mouse animation and idle blinking")
+    print("Verified all skins, keyboard/mouse animation and idle blinking")
 }

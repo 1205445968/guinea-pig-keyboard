@@ -7,7 +7,8 @@ namespace WheekKeys
             new PetSkin("californian", "白加州"),
             new PetSkin("gold-white", "黄白英短"),
             new PetSkin("teddy", "美泰"),
-            new PetSkin("silver-agouti", "雕灰")
+            new PetSkin("silver-agouti", "雕灰"),
+            new PetSkin("longhair", "长毛猪")
         };
 
         public readonly string Id;

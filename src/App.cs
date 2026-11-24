@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -10,12 +11,13 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 using Drawing = System.Drawing;
 
 [assembly: AssemblyProduct("WheekKeys")]
-[assembly: AssemblyVersion("0.1.3.0")]
-[assembly: AssemblyInformationalVersion("0.1.3")]
+[assembly: AssemblyVersion("0.1.4.0")]
+[assembly: AssemblyInformationalVersion("0.1.4")]
 
 namespace WheekKeys
 {
@@ -56,6 +58,13 @@ namespace WheekKeys
         private readonly PetScene scene;
         private readonly Forms.NotifyIcon tray;
         private readonly string settingsPath;
+        private readonly LocalPeers peers = new LocalPeers();
+        private readonly DispatcherTimer timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        private readonly Stopwatch clock = Stopwatch.StartNew();
+        private long keyCount, clickCount;
+        private bool countsDirty;
+        private double nextSave;
+        private bool hideForSogou = true;
         private DesktopInput input;
         private bool clickThrough;
         private bool ready;
@@ -98,7 +107,19 @@ namespace WheekKeys
             tray.ContextMenuStrip = BuildTrayMenu();
             tray.Visible = true;
             SourceInitialized += OnSourceInitialized;
-            Loaded += delegate { ready = true; };
+            Loaded += delegate { ready = true; timer.Start(); };
+            timer.Tick += delegate
+            {
+                double now = clock.Elapsed.TotalSeconds;
+                UpdateVisibility();
+                peers.Tick(now, scene.Skin, keyCount, clickCount);
+                if (settingsWindow != null) settingsWindow.RefreshActivity();
+                if (countsDirty && now >= nextSave)
+                {
+                    SaveSettings();
+                    nextSave = now + 5;
+                }
+            };
             MouseLeftButtonDown += delegate(object sender, MouseButtonEventArgs e)
             {
                 if (e.ButtonState == MouseButtonState.Pressed)
@@ -115,6 +136,8 @@ namespace WheekKeys
             };
             Closed += delegate
             {
+                timer.Stop();
+                peers.Dispose();
                 SaveSettings();
                 if (settingsWindow != null) settingsWindow.Close();
                 if (input != null) input.Dispose();
@@ -129,7 +152,26 @@ namespace WheekKeys
             HwndSource source = (HwndSource)PresentationSource.FromVisual(this);
             ApplyWindowStyles(source.Handle);
             EnsureVisible();
-            input = new DesktopInput(source, scene.PressKey, scene.ClickMouse, scene.MoveMouse);
+            input = new DesktopInput(source, OnKey, OnClick, delegate(double dx, double dy) { if (IsVisible) scene.MoveMouse(dx, dy); });
+        }
+
+        private void OnKey(int scan, bool firstPress)
+        {
+            if (firstPress && keyCount < long.MaxValue) { keyCount++; countsDirty = true; }
+            if (IsVisible) scene.PressKey(scan);
+        }
+
+        private void OnClick(bool right)
+        {
+            if (clickCount < long.MaxValue) { clickCount++; countsDirty = true; }
+            if (IsVisible) scene.ClickMouse(right);
+        }
+
+        private void UpdateVisibility()
+        {
+            bool hide = hideForSogou && SogouInput.IsActive();
+            if (hide && IsVisible) Hide();
+            else if (!hide && !IsVisible) Show();
         }
 
         private void ApplyWindowStyles(IntPtr handle)
@@ -148,13 +190,13 @@ namespace WheekKeys
             }
 
             settingsWindow = new PetSettings(this);
-            settingsWindow.Owner = this;
             Drawing.Rectangle work = Forms.Screen.FromPoint(screenPoint).WorkingArea;
             HwndSource source = PresentationSource.FromVisual(this) as HwndSource;
             Matrix fromPixels = source == null ? Matrix.Identity : source.CompositionTarget.TransformFromDevice;
             Point cursor = fromPixels.Transform(new Point(screenPoint.X, screenPoint.Y));
             Point start = fromPixels.Transform(new Point(work.Left, work.Top));
             Point end = fromPixels.Transform(new Point(work.Right, work.Bottom));
+            settingsWindow.Height = Math.Min(settingsWindow.Height, end.Y - start.Y);
             double left = cursor.X + 10;
             double top = cursor.Y + 10;
             if (left + settingsWindow.Width > end.X) left = cursor.X - settingsWindow.Width - 10;
@@ -181,6 +223,27 @@ namespace WheekKeys
         internal bool LabelsVisible { get { return scene.ShowKeyLabels; } }
         internal bool MouseClickThrough { get { return clickThrough; } }
         internal double PetWidth { get { return Width; } }
+        internal bool HideForSogou { get { return hideForSogou; } }
+        internal bool Networking { get { return peers.Enabled; } }
+        internal string PeerSummary { get { return peers.Summary; } }
+        internal string LocalTotals { get { return string.Format("本机累计　按键 {0}　点击 {1}", keyCount, clickCount); } }
+
+        internal void SetHideForSogou(bool value)
+        {
+            hideForSogou = value;
+            UpdateVisibility();
+            SaveSettings();
+        }
+
+        internal void SetNetworking(bool value)
+        {
+            if (value)
+            {
+                peers.Start();
+                peers.Tick(clock.Elapsed.TotalSeconds, scene.Skin, keyCount, clickCount);
+            }
+            else peers.Dispose();
+        }
 
         internal void SetClickThrough(bool value)
         {
@@ -311,6 +374,10 @@ namespace WheekKeys
                 scene.ShowKeyLabels = labels;
                 clickThrough = through;
                 scene.Skin = PetSkin.FromId(values.Length > 5 ? values[5] : null);
+                bool hide;
+                if (values.Length > 6 && bool.TryParse(values[6], out hide)) hideForSogou = hide;
+                if (values.Length > 7) LocalPeers.TryCount(values[7], out keyCount);
+                if (values.Length > 8) LocalPeers.TryCount(values[8], out clickCount);
             }
             catch { MoveToCorner(); }
         }
@@ -321,9 +388,14 @@ namespace WheekKeys
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(settingsPath));
-                File.WriteAllLines(settingsPath, new string[] {
+                string pending = settingsPath + ".tmp";
+                File.WriteAllLines(pending, new string[] {
                     Left.ToString("R", CultureInfo.InvariantCulture), Top.ToString("R", CultureInfo.InvariantCulture),
-                    Width.ToString("R", CultureInfo.InvariantCulture), scene.ShowKeyLabels.ToString(), clickThrough.ToString(), scene.Skin.Id });
+                    Width.ToString("R", CultureInfo.InvariantCulture), scene.ShowKeyLabels.ToString(), clickThrough.ToString(), scene.Skin.Id,
+                    hideForSogou.ToString(), keyCount.ToString(CultureInfo.InvariantCulture), clickCount.ToString(CultureInfo.InvariantCulture) });
+                if (File.Exists(settingsPath)) File.Replace(pending, settingsPath, null);
+                else File.Move(pending, settingsPath);
+                countsDirty = false;
             }
             catch { }
         }
