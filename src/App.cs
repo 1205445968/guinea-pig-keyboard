@@ -61,6 +61,8 @@ namespace WheekKeys
         private readonly string settingsPath;
         private readonly LocalPeers peers = new LocalPeers();
         private readonly DispatcherTimer timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        private readonly DispatcherTimer networkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
+        private readonly FriendDesktop friends;
         private readonly Stopwatch clock = Stopwatch.StartNew();
         private long keyCount, clickCount;
         private string nickname = "";
@@ -96,6 +98,7 @@ namespace WheekKeys
             Content = view;
             settingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WheekKeys", "settings.txt");
             RestoreSettings();
+            friends = new FriendDesktop(this, view);
             tray = new Forms.NotifyIcon();
             tray.Text = "豚鼠键盘";
             try { ownedIcon = Drawing.Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location); }
@@ -109,12 +112,17 @@ namespace WheekKeys
             tray.ContextMenuStrip = BuildTrayMenu();
             tray.Visible = true;
             SourceInitialized += OnSourceInitialized;
-            Loaded += delegate { ready = true; timer.Start(); };
+            Loaded += delegate { ready = true; timer.Start(); networkTimer.Start(); };
+            networkTimer.Tick += delegate
+            {
+                double now = clock.Elapsed.TotalSeconds;
+                peers.Tick(now, scene.Skin, keyCount, clickCount, nickname);
+                friends.Update(peers, now, clickThrough, scene.ShowKeyLabels);
+            };
             timer.Tick += delegate
             {
                 double now = clock.Elapsed.TotalSeconds;
                 UpdateVisibility();
-                peers.Tick(now, scene.Skin, keyCount, clickCount, nickname);
                 if (settingsWindow != null) settingsWindow.RefreshActivity();
                 if (countsDirty && now >= nextSave)
                 {
@@ -139,6 +147,8 @@ namespace WheekKeys
             Closed += delegate
             {
                 timer.Stop();
+                networkTimer.Stop();
+                friends.Dispose();
                 peers.Dispose();
                 SaveSettings();
                 if (settingsWindow != null) settingsWindow.Close();
@@ -160,12 +170,14 @@ namespace WheekKeys
         private void OnKey(int scan, bool firstPress)
         {
             if (firstPress && keyCount < long.MaxValue) { keyCount++; countsDirty = true; }
+            peers.RecordKey(scan, clock.Elapsed.TotalSeconds);
             if (IsVisible) scene.PressKey(scan);
         }
 
         private void OnClick(bool right)
         {
             if (clickCount < long.MaxValue) { clickCount++; countsDirty = true; }
+            peers.RecordClick(right, clock.Elapsed.TotalSeconds);
             if (IsVisible) scene.ClickMouse(right);
         }
 
@@ -248,6 +260,7 @@ namespace WheekKeys
                 return false;
             }
             error = null;
+            peers.RefreshState();
             return true;
         }
 
@@ -287,6 +300,7 @@ namespace WheekKeys
         internal void SetSkin(PetSkin skin)
         {
             scene.Skin = skin;
+            peers.RefreshState();
             RefreshTrayMenu();
             SaveSettings();
         }

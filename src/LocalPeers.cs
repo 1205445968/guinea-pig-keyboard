@@ -15,11 +15,22 @@ namespace WheekKeys
         private readonly SortedDictionary<string, Peer> peers = new SortedDictionary<string, Peer>(StringComparer.Ordinal);
         private readonly byte[] buffer = new byte[129];
         private readonly List<IPEndPoint> targets = new List<IPEndPoint>();
+        private readonly Queue<PeerAction> pendingActions = new Queue<PeerAction>();
         private Socket socket;
         private RoomTransport room;
         private readonly string session = Guid.NewGuid().ToString("N");
         private double nextSend, nextInterfaceCheck;
         private string problem;
+        private double nextActionSend;
+        private long actionSequence;
+        private bool shareActivity = true;
+
+        internal struct PeerAction
+        {
+            public char Kind;
+            public int Scan;
+            public double Received;
+        }
 
         internal sealed class Peer
         {
@@ -27,6 +38,21 @@ namespace WheekKeys
             public long Keys, Clicks;
             public double Seen;
             public string Nickname = "";
+            public bool SupportsActivity, SharingActivity;
+            internal bool HasAppearance;
+            internal long ActionSequence;
+            internal readonly Queue<PeerAction> Actions = new Queue<PeerAction>();
+
+            public bool TryTakeAction(double now, out PeerAction action)
+            {
+                while (Actions.Count > 0)
+                {
+                    action = Actions.Dequeue();
+                    if (SharingActivity && now - action.Received <= 0.8) return true;
+                }
+                action = new PeerAction();
+                return false;
+            }
         }
 
         public bool Enabled { get { return socket != null || room != null; } }
@@ -35,6 +61,33 @@ namespace WheekKeys
         public string RoomStatus { get { return room == null ? null : room.Status; } }
         public string Problem { get { return problem; } }
         public IReadOnlyDictionary<string, Peer> Members { get { return peers; } }
+        public bool ShareActivity
+        {
+            get { return shareActivity; }
+            set
+            {
+                if (shareActivity == value) return;
+                shareActivity = value;
+                pendingActions.Clear();
+                RefreshState();
+            }
+        }
+
+        public void RefreshState() { nextSend = 0; }
+
+        public void RecordKey(int scan, double now)
+        {
+            if (scan > 0 && scan <= 511) RecordAction('k', scan, now);
+        }
+
+        public void RecordClick(bool right, double now) { RecordAction(right ? 'r' : 'l', 0, now); }
+
+        private void RecordAction(char kind, int scan, double now)
+        {
+            if (!Enabled || !shareActivity || (room != null && !room.Connected)) return;
+            if (pendingActions.Count >= 64) pendingActions.Dequeue();
+            pendingActions.Enqueue(new PeerAction { Kind = kind, Scan = scan, Received = now });
+        }
 
         public void EnterRoom(string code)
         {
@@ -69,6 +122,8 @@ namespace WheekKeys
             socket = null;
             peers.Clear();
             targets.Clear();
+            pendingActions.Clear();
+            nextActionSend = 0;
             problem = null;
         }
 
@@ -88,23 +143,24 @@ namespace WheekKeys
             if (room != null && !room.Connected)
             {
                 peers.Clear();
+                pendingActions.Clear();
                 nextSend = 0;
                 return;
             }
             if (now >= nextSend)
             {
                 string message = string.Format(CultureInfo.InvariantCulture, "WK1|{0}|{1}|{2}|{3}", session, skin.NetworkId, keys, clicks);
-                if (room == null) Broadcast(now, message);
-                else room.Publish(message);
+                Publish(now, message);
+                Publish(now, "WS1|" + session + "|" + skin.Id + "|" + (shareActivity ? "1" : "0"));
                 string normalized;
                 if (PetName.TryNormalize(nickname, out normalized) && normalized == nickname)
                 {
                     string nameMessage = "WN1|" + session + "|" + PetName.Encode(nickname);
-                    if (room == null) Broadcast(now, nameMessage);
-                    else room.Publish(nameMessage);
+                    Publish(now, nameMessage);
                 }
                 nextSend = now + (room == null ? 2 : 5);
             }
+            FlushActions(now);
             if (room != null)
             {
                 string message;
@@ -126,6 +182,28 @@ namespace WheekKeys
                     break;
                 }
             }
+        }
+
+        private void Publish(double now, string message)
+        {
+            if (room == null) Broadcast(now, message);
+            else room.Publish(message);
+        }
+
+        private void FlushActions(double now)
+        {
+            if (!shareActivity || now < nextActionSend || pendingActions.Count == 0 || actionSequence == long.MaxValue) return;
+            List<string> actions = new List<string>();
+            while (pendingActions.Count > 0 && actions.Count < 12)
+            {
+                PeerAction action = pendingActions.Dequeue();
+                if (now - action.Received > 0.8) continue;
+                actions.Add(action.Kind == 'k' ? "k" + action.Scan.ToString(CultureInfo.InvariantCulture) : action.Kind.ToString());
+            }
+            if (actions.Count == 0) return;
+            actionSequence++;
+            Publish(now, "WA1|" + session + "|" + actionSequence.ToString(CultureInfo.InvariantCulture) + "|" + string.Join(",", actions));
+            nextActionSend = now + 0.03;
         }
 
         private void Broadcast(double now, string message)
@@ -172,6 +250,23 @@ namespace WheekKeys
         {
             if (message.Length > 128) return;
             string[] fields = message.Split('|');
+            if (fields.Length == 4 && (fields[0] == "WS1" || fields[0] == "WA1"))
+            {
+                Peer existing;
+                if (fields[1] == session || !ValidId(fields[1]) || !peers.TryGetValue(fields[1], out existing)) return;
+                if (fields[0] == "WS1")
+                {
+                    if (fields[3] != "0" && fields[3] != "1") return;
+                    PetSkin exact = PetSkin.FromId(fields[2]);
+                    if (exact.Id == fields[2]) { existing.Skin = exact; existing.HasAppearance = true; }
+                    existing.SupportsActivity = true;
+                    existing.SharingActivity = fields[3] == "1";
+                    if (!existing.SharingActivity) existing.Actions.Clear();
+                    existing.Seen = now;
+                }
+                else ReadActions(fields, existing, now);
+                return;
+            }
             if (fields.Length == 3 && fields[0] == "WN1")
             {
                 string nameId = fields[1];
@@ -195,9 +290,33 @@ namespace WheekKeys
                 peers.Add(id, peer = new Peer());
             }
             peer.Seen = now;
-            peer.Skin = skin;
+            if (!peer.HasAppearance) peer.Skin = skin;
             peer.Keys = keys;
             peer.Clicks = clicks;
+        }
+
+        private static void ReadActions(string[] fields, Peer peer, double now)
+        {
+            long sequence;
+            if (!peer.SharingActivity || !TryCount(fields[2], out sequence) || sequence <= peer.ActionSequence) return;
+            string[] tokens = fields[3].Split(',');
+            if (tokens.Length == 0 || tokens.Length > 12) return;
+            List<PeerAction> actions = new List<PeerAction>();
+            foreach (string token in tokens)
+            {
+                long scan;
+                if (token == "l" || token == "r") actions.Add(new PeerAction { Kind = token[0], Received = now });
+                else if (token.Length >= 2 && token[0] == 'k' && TryCount(token.Substring(1), out scan) && scan > 0 && scan <= 511)
+                    actions.Add(new PeerAction { Kind = 'k', Scan = (int)scan, Received = now });
+                else return;
+            }
+            peer.ActionSequence = sequence;
+            peer.Seen = now;
+            foreach (PeerAction action in actions)
+            {
+                if (peer.Actions.Count >= 64) peer.Actions.Dequeue();
+                peer.Actions.Enqueue(action);
+            }
         }
 
         private static bool ValidId(string id)
