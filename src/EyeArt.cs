@@ -22,6 +22,7 @@ namespace WheekKeys
         private readonly BitmapSource[] _eyes;
         private readonly BitmapSource[] _sleepEyes;
         private static readonly BitmapSource OpenMouth = PixelPetScene.Sprite("mouth-smile.png");
+        private static readonly BitmapSource LowerLip = PixelPetScene.Sprite("mouth-lower.png");
         private readonly int _sourceWidth;
         private readonly int _sourceHeight;
         private readonly byte[] _bodyPixels;
@@ -60,7 +61,7 @@ namespace WheekKeys
             Body.Freeze();
             _bodyPixels = new byte[body.Length];
             new FormatConvertedBitmap(Body, PixelFormats.Pbgra32, null, 0).CopyPixels(_bodyPixels, stride, 0);
-            _mouth = new MouthArt(Body, true, OpenMouth);
+            _mouth = new MouthArt(Body, true, OpenMouth, LowerLip);
             _faceWeights = CreateFaceWeights();
         }
 

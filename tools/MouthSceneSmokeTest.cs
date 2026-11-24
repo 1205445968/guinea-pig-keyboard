@@ -47,6 +47,11 @@ internal static class MouthSceneSmokeTest
         }
         return count;
     }
+    private static bool DarkPixel(byte[] pixels, int width, int x, int y)
+    {
+        int i = (y * width + x) * 4;
+        return pixels[i + 3] != 0 && Math.Max(pixels[i], Math.Max(pixels[i + 1], pixels[i + 2])) < 128;
+    }
     [STAThread]
     private static int Main(string[] args)
     {
@@ -78,6 +83,17 @@ internal static class MouthSceneSmokeTest
                 HashSet<string> eyeColors = new HashSet<string>();
                 for (int i = 0; i < eyePixels.Length; i += 4) if (eyePixels[i + 3] != 0) eyeColors.Add(eyePixels[i] + "," + eyePixels[i + 1] + "," + eyePixels[i + 2]);
                 Check(eyeColors.Count == 1, id + " open eye uses one visible color");
+                bool leftLip = false, rightLip = false, centerLow = false;
+                for (int y = 58; y <= 60; y++) { leftLip |= DarkPixel(raw[0], sourceWidth, 43, y) || DarkPixel(raw[0], sourceWidth, 44, y); rightLip |= DarkPixel(raw[0], sourceWidth, 56, y) || DarkPixel(raw[0], sourceWidth, 57, y); }
+                for (int y = 61; y <= 62; y++) for (int x = 49; x <= 52; x++) centerLow |= DarkPixel(raw[0], sourceWidth, x, y);
+                Check(leftLip && rightLip && centerLow, id + " resting mouth retains the dark U-shaped lower lip");
+                BitmapSource bodyFrame = (BitmapSource)eyeArt.GetType().GetProperty("Body").GetValue(eyeArt, null);
+                byte[] bodyPixels = new byte[sourceWidth * bodyFrame.PixelHeight * 4];
+                new FormatConvertedBitmap(bodyFrame, PixelFormats.Pbgra32, null, 0).CopyPixels(bodyPixels, sourceWidth * 4, 0);
+                bool contractedLip = false;
+                for (int y = 56; y <= 64; y++) for (int x = 42; x <= 60; x++)
+                    contractedLip |= DarkPixel(raw[3], sourceWidth, x, y) && !DarkPixel(bodyPixels, sourceWidth, x, y);
+                Check(contractedLip, id + " contracted mouth still has a separate lower lip");
                 Check(Frame(scene) == 3 && changed > 0, id + " mouth visibly changes (frame " + Frame(scene) + ", pixels " + changed + ", source " + Differences(raw[0], raw[3]) + ")");
                 Check(Differences(raw[0], raw[3]) > 0, id + " source mouth pixels move");
                 for (int i = 0; i < raw[0].Length; i += 4)

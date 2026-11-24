@@ -14,7 +14,7 @@ internal static class FriendDesktopSmokeTest
     [DllImport("user32.dll")] private static extern int GetWindowLong(IntPtr h, int index);
     private static object Field(object o, string name) { return o.GetType().GetField(name, Private).GetValue(o); }
     private static object Get(object o, string name) { return o.GetType().GetProperty(name).GetValue(o, null); }
-    private static void Call(object o, string method, params object[] args) { o.GetType().GetMethod(method).Invoke(o, args); }
+    private static void Call(object o, string method, params object[] args) { o.GetType().GetMethod(method, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).Invoke(o, args); }
     private static void Check(bool ok, string label) { if (!ok) throw new Exception(label); }
     private static void Pump(Window owner) { owner.UpdateLayout(); DispatcherFrame frame = new DispatcherFrame(); Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.Background, new Action(delegate { frame.Continue = false; })); Dispatcher.PushFrame(frame); }
     private static object First(IDictionary items) { foreach (DictionaryEntry item in items) return item.Value; return null; }
@@ -54,9 +54,27 @@ internal static class FriendDesktopSmokeTest
             object wrapper = First(windows); Window friend=(Window)Field(wrapper,"window");
             var remote=(FrameworkElement)Field(wrapper,"scene"); Viewbox remoteView=(Viewbox)Field(wrapper,"box");
             var label=(TextBlock)Field(wrapper,"label");
-            Check((bool)Field(source,"followCursor") && !(bool)Field(remote,"followCursor"),"only the local pet follows the cursor");
-            Check((Vector)Field(remote,"gazeOffset")==new Vector() && ((DispatcherTimer)Field(remote,"gaze")).IsEnabled,
-                "friend gaze stays centered and can blink");
+            Check((bool)Field(remote,"followCursor") && ((DispatcherTimer)Field(remote,"gaze")).IsEnabled,
+                "friend follows cursor and gaze timer is enabled");
+            Call(remote,"LookAt",new Point(-1000,50));
+            for(int i=0;i<20;i++) Call(remote,"AdvanceHead");
+            Check(((Vector)Field(remote,"headOffset")).X<0,"friend head follows cursor left");
+            Call(remote,"LookAt",new Point(1000,50));
+            for(int i=0;i<20;i++) Call(remote,"AdvanceHead");
+            Check(((Vector)Field(remote,"headOffset")).X>0,"friend head follows cursor right");
+            object sleep=Field(remote,"sleep");
+            double now=(double)Get(Field(remote,"clock"),"Elapsed").GetType().GetProperty("TotalMilliseconds").GetValue(Get(Field(remote,"clock"),"Elapsed"),null);
+            FieldInfo lastActivity=sleep.GetType().GetField("lastActivity",Private), wakeStarted=sleep.GetType().GetField("wakeStarted",Private);
+            lastActivity.SetValue(sleep,now-32000);
+            FieldInfo headOffset=remote.GetType().GetField("headOffset",Private), gazeOffset=remote.GetType().GetField("gazeOffset",Private);
+            headOffset.SetValue(remote,new Vector()); gazeOffset.SetValue(remote,new Vector());
+            for(int i=0;i<2;i++) { Call(remote,"LookAt",new Point(i==0?-1000:1000,50)); Call(remote,"AdvanceFace",now); }
+            Check((Vector)Field(remote,"headOffset")==new Vector() && (double)CallProgress(sleep,now)==1 && (double)lastActivity.GetValue(sleep)==now-32000,
+                "sleeping friend ignores cursor gaze without waking");
+            Call(source,"MoveMouse",3.0,2.0); Call(remote,"AdvanceFace",now);
+            Check((double)CallProgress(sleep,now)==1 && (double)lastActivity.GetValue(sleep)==now-32000,
+                "local mouse movement does not wake sleeping friend");
+            lastActivity.SetValue(sleep,now); wakeStarted.SetValue(sleep,double.NegativeInfinity);
             foreach(double width in new[]{180.0,310.0,600.0})
             {
                 owner.Width=width; owner.Height=width*308/400; Pump(owner);
@@ -96,4 +114,6 @@ internal static class FriendDesktopSmokeTest
         catch(Exception e) { Console.Error.WriteLine(e); return 1; }
         finally { ((IDisposable)stage).Dispose(); ((IDisposable)network).Dispose(); owner.Close(); }
     }
+
+    private static double CallProgress(object sleep, double now) { return (double)sleep.GetType().GetMethod("Progress").Invoke(sleep,new object[]{now}); }
 }

@@ -80,7 +80,7 @@ namespace WheekKeys
                 this.viewport = viewport;
                 Slot = slot;
                 through = clickThrough;
-                scene = new PixelPetScene(false);
+                scene = new PixelPetScene();
                 scene.ShowKeyLabels = true;
                 box = new Viewbox { Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Bottom, Child = scene };
                 label = new TextBlock { Foreground = Brushes.White, Background = new SolidColorBrush(Color.FromArgb(190, 50, 38, 26)),

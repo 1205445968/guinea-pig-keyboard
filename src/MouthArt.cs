@@ -13,7 +13,7 @@ namespace WheekKeys
         private readonly Rect region;
         private readonly byte[] original;
 
-        public MouthArt(BitmapSource source, bool pixel, BitmapSource openMouth = null)
+        public MouthArt(BitmapSource source, bool pixel, BitmapSource openMouth = null, BitmapSource lowerLip = null)
         {
             width = source.PixelWidth; height = source.PixelHeight; stride = width * 4;
             region = pixel ? new Rect(width * 0.385, height * 48.0 / 104, width * 0.24, height * 18.0 / 104)
@@ -22,10 +22,15 @@ namespace WheekKeys
             new FormatConvertedBitmap(source, PixelFormats.Pbgra32, null, 0).CopyPixels(original, stride, 0);
             if (pixel && openMouth != null)
             {
-                CreatePixelMouths(source, openMouth);
-                return;
+                Stamp(openMouth, 42, 49);
+                if (lowerLip != null) Stamp(lowerLip, 42, 58);
             }
             Pixels[0] = original; Frames[0] = source;
+            if (pixel && openMouth != null)
+            {
+                Frames[0] = BitmapSource.Create(width, height, source.DpiX, source.DpiY, PixelFormats.Pbgra32, null, original, stride);
+                Frames[0].Freeze();
+            }
             for (int frame = 1; frame < Frames.Length; frame++)
             {
                 byte[] pixels = (byte[])original.Clone();
@@ -60,38 +65,25 @@ namespace WheekKeys
             }
         }
 
-        private void CreatePixelMouths(BitmapSource source, BitmapSource mouth)
+        private void Stamp(BitmapSource sprite, int left, int top)
         {
-            int patchStride = mouth.PixelWidth * 4;
-            byte[] patch = new byte[patchStride * mouth.PixelHeight];
-            new FormatConvertedBitmap(mouth, PixelFormats.Pbgra32, null, 0).CopyPixels(patch, patchStride, 0);
-            for (int frame = 0; frame < Frames.Length; frame++)
-            {
-                byte[] pixels = (byte[])original.Clone();
-                if (frame < 3)
+            int patchStride = sprite.PixelWidth * 4;
+            byte[] patch = new byte[patchStride * sprite.PixelHeight];
+            new FormatConvertedBitmap(sprite, PixelFormats.Pbgra32, null, 0).CopyPixels(patch, patchStride, 0);
+            for (int y = 0; y < sprite.PixelHeight; y++)
+                for (int x = 0; x < sprite.PixelWidth; x++)
                 {
-                    int rows = Math.Max(1, mouth.PixelHeight * (3 - frame) / 3);
-                    int top = 49;
-                    for (int y = 0; y < rows; y++)
-                        for (int x = 0; x < mouth.PixelWidth; x++)
-                        {
-                            int targetX = 42 + x, targetY = top + y;
-                            if (!Interior(targetX, targetY, 2)) continue;
-                            int sampleY = Math.Min(mouth.PixelHeight - 1, (2 * y + 1) * mouth.PixelHeight / (2 * rows));
-                            int from = sampleY * patchStride + x * 4;
-                            int alpha = patch[from + 3];
-                            if (alpha == 0) continue;
-                            int destination = targetY * stride + targetX * 4;
-                            int bodyAlpha = original[destination + 3];
-                            for (int channel = 0; channel < 3; channel++)
-                                pixels[destination + channel] = (byte)Math.Min(bodyAlpha,
-                                    (patch[from + channel] * bodyAlpha + pixels[destination + channel] * (255 - alpha) + 127) / 255);
-                        }
+                    int targetX = left + x, targetY = top + y;
+                    if (!Interior(targetX, targetY, 2)) continue;
+                    int from = y * patchStride + x * 4;
+                    int alpha = patch[from + 3];
+                    if (alpha == 0) continue;
+                    int destination = targetY * stride + targetX * 4;
+                    int bodyAlpha = original[destination + 3];
+                    for (int channel = 0; channel < 3; channel++)
+                        original[destination + channel] = (byte)Math.Min(bodyAlpha,
+                            (patch[from + channel] * bodyAlpha + original[destination + channel] * (255 - alpha) + 127) / 255);
                 }
-                Pixels[frame] = pixels;
-                Frames[frame] = BitmapSource.Create(width, height, source.DpiX, source.DpiY, PixelFormats.Pbgra32, null, pixels, stride);
-                Frames[frame].Freeze();
-            }
         }
 
         public void Draw(DrawingContext dc, Rect bounds, int frame)
