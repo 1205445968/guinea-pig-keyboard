@@ -161,32 +161,33 @@ internal static class PixelSkinSmokeTest
     {
         Type type = scene.GetType();
         var advance = type.GetMethod("AdvanceFace", BindingFlags.NonPublic | BindingFlags.Instance);
-        var lastInput = type.GetField("lastInput", BindingFlags.NonPublic | BindingFlags.Instance);
-        double start = (double)lastInput.GetValue(scene);
-        advance.Invoke(scene, new object[] { start + 29999 });
-        Check(Field(scene, "doze") == null, "awake before idle delay");
-        advance.Invoke(scene, new object[] { start + 30000 });
-        Check((int)Field(Field(scene, "doze"), "Eyes") == 1, "starts with drooping eyes");
-        Action yawn = delegate {
-            lastInput.SetValue(scene, -31500.0);
-            advance.Invoke(scene, new object[] { 0.0 });
-            object frame = Field(scene, "doze");
-            Check((int)Field(frame, "Eyes") == 2 && (int)Field(frame, "Mouth") == 2
-                && (int)Field(frame, "Nod") > 0, "closed eyes, nod and open yawn");
+        object sleep = Field(scene, "sleep");
+        var lastInput = sleep.GetType().GetField("lastActivity", BindingFlags.NonPublic | BindingFlags.Instance);
+        var progress = sleep.GetType().GetMethod("Progress");
+        var clock = (System.Diagnostics.Stopwatch)Field(scene, "clock");
+        double start = (double)lastInput.GetValue(sleep);
+        Check((double)progress.Invoke(sleep, new object[] { start + 29999 }) == 0, "awake before idle delay");
+        Check((double)progress.Invoke(sleep, new object[] { start + 30700 }) == 1, "settles into sleepy eyes");
+        Action asleep = delegate {
+            double now = clock.Elapsed.TotalMilliseconds;
+            lastInput.SetValue(sleep, now - 32000);
+            advance.Invoke(scene, new object[] { now });
+            Check((double)progress.Invoke(sleep, new object[] { now }) == 1, "sleeping without input");
         };
-        yawn();
+        asleep();
         type.GetMethod("MoveMouse").Invoke(scene, new object[] { 0.0, 0.0 });
         type.GetMethod("ScrollMouse").Invoke(scene, new object[] { 0 });
-        Check(Field(scene, "doze") != null, "zero mouse deltas preserve sleep");
+        Check((double)progress.Invoke(sleep, new object[] { clock.Elapsed.TotalMilliseconds }) == 1, "zero mouse deltas preserve sleep");
         foreach (Action input in new Action[] {
             delegate { type.GetMethod("PressKey").Invoke(scene, new object[] { 47 }); },
             delegate { type.GetMethod("MoveMouse").Invoke(scene, new object[] { 2.0, 2.0 }); },
             delegate { type.GetMethod("ClickMouse").Invoke(scene, new object[] { false }); },
             delegate { type.GetMethod("ScrollMouse").Invoke(scene, new object[] { 120 }); }
         }) {
-            yawn();
+            asleep();
             input();
-            Check(Field(scene, "doze") == null && (double)lastInput.GetValue(scene) >= 0, "input wakes dozing pet");
+            Check((double)progress.Invoke(sleep, new object[] { clock.Elapsed.TotalMilliseconds }) == 0
+                && (double)lastInput.GetValue(sleep) >= 0, "input wakes dozing pet");
         }
     }
 
