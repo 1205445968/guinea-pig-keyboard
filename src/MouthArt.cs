@@ -13,13 +13,18 @@ namespace WheekKeys
         private readonly Rect region;
         private readonly byte[] original;
 
-        public MouthArt(BitmapSource source, bool pixel)
+        public MouthArt(BitmapSource source, bool pixel, BitmapSource openMouth = null)
         {
             width = source.PixelWidth; height = source.PixelHeight; stride = width * 4;
             region = pixel ? new Rect(width * 0.385, height * 48.0 / 104, width * 0.24, height * 18.0 / 104)
                 : new Rect(width * 0.84, height * 0.60, width * 0.145, height * 0.15);
             original = new byte[stride * height];
             new FormatConvertedBitmap(source, PixelFormats.Pbgra32, null, 0).CopyPixels(original, stride, 0);
+            if (pixel && openMouth != null)
+            {
+                CreatePixelMouths(source, openMouth);
+                return;
+            }
             Pixels[0] = original; Frames[0] = source;
             for (int frame = 1; frame < Frames.Length; frame++)
             {
@@ -49,6 +54,40 @@ namespace WheekKeys
                             pixels[destination + channel] = (byte)Math.Min(destinationAlpha,
                                 (original[from + channel] * destinationAlpha + sourceAlpha / 2) / sourceAlpha);
                     }
+                Pixels[frame] = pixels;
+                Frames[frame] = BitmapSource.Create(width, height, source.DpiX, source.DpiY, PixelFormats.Pbgra32, null, pixels, stride);
+                Frames[frame].Freeze();
+            }
+        }
+
+        private void CreatePixelMouths(BitmapSource source, BitmapSource mouth)
+        {
+            int patchStride = mouth.PixelWidth * 4;
+            byte[] patch = new byte[patchStride * mouth.PixelHeight];
+            new FormatConvertedBitmap(mouth, PixelFormats.Pbgra32, null, 0).CopyPixels(patch, patchStride, 0);
+            for (int frame = 0; frame < Frames.Length; frame++)
+            {
+                byte[] pixels = (byte[])original.Clone();
+                if (frame < 3)
+                {
+                    int rows = Math.Max(1, mouth.PixelHeight * (3 - frame) / 3);
+                    int top = 49;
+                    for (int y = 0; y < rows; y++)
+                        for (int x = 0; x < mouth.PixelWidth; x++)
+                        {
+                            int targetX = 42 + x, targetY = top + y;
+                            if (!Interior(targetX, targetY, 2)) continue;
+                            int sampleY = Math.Min(mouth.PixelHeight - 1, (2 * y + 1) * mouth.PixelHeight / (2 * rows));
+                            int from = sampleY * patchStride + x * 4;
+                            int alpha = patch[from + 3];
+                            if (alpha == 0) continue;
+                            int destination = targetY * stride + targetX * 4;
+                            int bodyAlpha = original[destination + 3];
+                            for (int channel = 0; channel < 3; channel++)
+                                pixels[destination + channel] = (byte)Math.Min(bodyAlpha,
+                                    (patch[from + channel] * bodyAlpha + pixels[destination + channel] * (255 - alpha) + 127) / 255);
+                        }
+                }
                 Pixels[frame] = pixels;
                 Frames[frame] = BitmapSource.Create(width, height, source.DpiX, source.DpiY, PixelFormats.Pbgra32, null, pixels, stride);
                 Frames[frame].Freeze();
