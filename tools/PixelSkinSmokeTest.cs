@@ -138,6 +138,7 @@ internal static class PixelSkinSmokeTest
             sceneType.GetProperty("Skin").SetValue(scene, pixel, null);
             Pump();
             Check(scene.IsLoaded && ((DispatcherTimer)Field(scene, "gaze")).IsEnabled, "pixel gaze started");
+            CheckDozing(scene);
             CheckWheelInput(assembly, host, scene);
             sceneType.GetMethod("PressKey").Invoke(scene, new object[] { 47 });
             object left = Field(scene, "left"), right = Field(scene, "right");
@@ -153,6 +154,39 @@ internal static class PixelSkinSmokeTest
             Pump();
             Check(!((DispatcherTimer)Field(scene, "gaze")).IsEnabled
                 && !((DispatcherTimer)Field(scene, "animation")).IsEnabled, "detached timers stopped");
+        }
+    }
+
+    private static void CheckDozing(FrameworkElement scene)
+    {
+        Type type = scene.GetType();
+        var advance = type.GetMethod("AdvanceFace", BindingFlags.NonPublic | BindingFlags.Instance);
+        var lastInput = type.GetField("lastInput", BindingFlags.NonPublic | BindingFlags.Instance);
+        double start = (double)lastInput.GetValue(scene);
+        advance.Invoke(scene, new object[] { start + 29999 });
+        Check(Field(scene, "doze") == null, "awake before idle delay");
+        advance.Invoke(scene, new object[] { start + 30000 });
+        Check((int)Field(Field(scene, "doze"), "Eyes") == 1, "starts with drooping eyes");
+        Action yawn = delegate {
+            lastInput.SetValue(scene, -31500.0);
+            advance.Invoke(scene, new object[] { 0.0 });
+            object frame = Field(scene, "doze");
+            Check((int)Field(frame, "Eyes") == 2 && (int)Field(frame, "Mouth") == 2
+                && (int)Field(frame, "Nod") > 0, "closed eyes, nod and open yawn");
+        };
+        yawn();
+        type.GetMethod("MoveMouse").Invoke(scene, new object[] { 0.0, 0.0 });
+        type.GetMethod("ScrollMouse").Invoke(scene, new object[] { 0 });
+        Check(Field(scene, "doze") != null, "zero mouse deltas preserve sleep");
+        foreach (Action input in new Action[] {
+            delegate { type.GetMethod("PressKey").Invoke(scene, new object[] { 47 }); },
+            delegate { type.GetMethod("MoveMouse").Invoke(scene, new object[] { 2.0, 2.0 }); },
+            delegate { type.GetMethod("ClickMouse").Invoke(scene, new object[] { false }); },
+            delegate { type.GetMethod("ScrollMouse").Invoke(scene, new object[] { 120 }); }
+        }) {
+            yawn();
+            input();
+            Check(Field(scene, "doze") == null && (double)lastInput.GetValue(scene) >= 0, "input wakes dozing pet");
         }
     }
 

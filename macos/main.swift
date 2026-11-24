@@ -349,6 +349,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             }
             pet.pressKey(UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode)))
         case .flagsChanged:
+            pet.noteInput(ProcessInfo.processInfo.systemUptime)
             let code = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
             if code == 57 {
                 incrementKeyCount()

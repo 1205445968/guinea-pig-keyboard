@@ -37,7 +37,8 @@ struct PetSkin {
                                CGPoint(x: -2, y: 2), CGPoint(x: 2, y: 2)]
     private static let openEye: [UInt8] = [0b011110, 0b111111, 0b111111, 0b111111, 0b111111, 0b011110]
     private static let halfEye: [UInt8] = [0, 0, 0b011110, 0b111111, 0b011110, 0]
-    private static let closedEye: [UInt8] = [0, 0, 0b100001, 0b011110, 0, 0]
+    private static let closedEye: [UInt8] = [0, 0, 0b100001, 0b110011, 0b011110, 0]
+    private static let glint = color(0xFFF0D5)
 
     private init(_ id: String, _ name: String, coat: String? = nil, paw: String, networkID: String,
                  fur: UInt32 = 0xFFFAF1, ink: UInt32 = 0x624737, darkEyes: Bool = false) {
@@ -76,6 +77,13 @@ struct PetSkin {
                     context.fill(CGRect(x: rect.minX + (x + CGFloat(column) + offset.x) * sx,
                                         y: rect.minY + (30 + CGFloat(y) + offset.y) * sy, width: sx, height: sy))
                 }
+            }
+        }
+        if frame < 9 {
+            context.setFillColor(Self.glint)
+            for x in [CGFloat(31), CGFloat(66)] {
+                context.fill(CGRect(x: rect.minX + (x + offset.x) * sx,
+                                    y: rect.minY + (31 + offset.y) * sy, width: sx, height: sy))
             }
         }
         context.restoreGState()

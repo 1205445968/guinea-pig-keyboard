@@ -18,7 +18,9 @@ try {
         $arguments += '/reference:' + (Join-Path $frameworkDir "WPF\$assembly.dll")
     }
     $arguments += '/resource:assets/avatar.png,avatar.png'
+    $arguments += '/resource:assets/pixel/doze.txt,doze.txt'
     foreach ($asset in Get-ChildItem -LiteralPath 'assets/pixel' -Filter '*.png' -File) {
+        if ($asset.Name.StartsWith('mac-')) { continue }
         $arguments += "/resource:assets/pixel/$($asset.Name),pixel-$($asset.Name)"
     }
     $sources = (Get-ChildItem -LiteralPath 'src' -Filter '*.cs').FullName

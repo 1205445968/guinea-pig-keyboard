@@ -3,6 +3,30 @@ import AppKit
 final class PetView: NSView {
     private static let settleTime: TimeInterval = 0.285
     private static let bubbleTime: TimeInterval = 0.395
+    static let idleDelay: TimeInterval = 30
+    struct DozeFrame {
+        let duration: TimeInterval
+        let eyes, mouth, nod: Int
+    }
+    private static let dozeFrames: [DozeFrame] = {
+        guard let url = Bundle.main.url(forResource: "doze", withExtension: "txt"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else { fatalError("缺少 doze.txt") }
+        return text.split(whereSeparator: \.isNewline).filter { !$0.hasPrefix("#") }.map { line in
+            let values = line.split(separator: " ").compactMap { Int($0) }
+            precondition(values.count == 4 && values[0] > 0, "无效的瞌睡帧")
+            return DozeFrame(duration: Double(values[0]) / 1000, eyes: values[1], mouth: values[2], nod: values[3])
+        }
+    }()
+    static func dozePose(idle: TimeInterval) -> (frame: DozeFrame, remaining: TimeInterval)? {
+        guard idle >= idleDelay else { return nil }
+        let cycle = dozeFrames.reduce(0) { $0 + $1.duration }
+        var phase = (idle - idleDelay).truncatingRemainder(dividingBy: cycle)
+        for frame in dozeFrames {
+            if phase < frame.duration { return (frame, frame.duration - phase) }
+            phase -= frame.duration
+        }
+        return (dozeFrames[0], dozeFrames[0].duration)
+    }
     var onOpenSettings: (() -> Void)?
 
     override func rightMouseDown(with event: NSEvent) {
@@ -106,6 +130,9 @@ final class PetView: NSView {
     private var gazeDX: Double = 0
     private var gazeDY: Double = 0
     private var lastFrame: TimeInterval = 0
+    private var lastInput = ProcessInfo.processInfo.systemUptime
+    private var mouthStarted: TimeInterval = -.infinity
+    private var doze: DozeFrame?
     private var lastMouseUse: TimeInterval = -.infinity
     private var lastClick: TimeInterval = -.infinity
     private var lastScroll: TimeInterval = -.infinity
@@ -132,10 +159,12 @@ final class PetView: NSView {
             blinkTimer?.invalidate()
             blinkTimer = nil
             blinkStarted = nil
+            doze = nil
             gazeFrame = 0
             gazeDX = 0
             gazeDY = 0
         } else {
+            lastInput = ProcessInfo.processInfo.systemUptime
             scheduleBlink()
         }
     }
@@ -145,15 +174,35 @@ final class PetView: NSView {
     }
     private func scheduleBlink() {
         guard window != nil, blinkTimer == nil, blinkStarted == nil else { return }
-        let timer = Timer(timeInterval: Double.random(in: 3...6), repeats: false) { [weak self] _ in
+        let idle = ProcessInfo.processInfo.systemUptime - lastInput
+        let pose = Self.dozePose(idle: idle)
+        doze = pose?.frame
+        let delay = pose?.remaining ?? min(Double.random(in: 3...6), Self.idleDelay - idle)
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
             guard let self = self else { return }
             self.blinkTimer = nil
             let now = ProcessInfo.processInfo.systemUptime
+            if now - self.lastInput >= Self.idleDelay {
+                self.scheduleBlink()
+                self.needsDisplay = true
+                return
+            }
             self.blinkStarted = now
             self.wake(now)
         }
         blinkTimer = timer
         RunLoop.main.add(timer, forMode: .common)
+    }
+    func noteInput(_ now: TimeInterval, twitch: Bool = false) {
+        lastInput = now
+        if twitch && now - mouthStarted >= 0.270 { mouthStarted = now }
+        if doze != nil {
+            doze = nil
+            blinkTimer?.invalidate()
+            blinkTimer = nil
+            scheduleBlink()
+            needsDisplay = true
+        }
     }
     func selectSkin(_ id: String) {
         skin = PetSkin.named(id)
@@ -163,6 +212,7 @@ final class PetView: NSView {
         let key = keyInfo(keyCode)
         let hand = key.right ? left : right
         let now = ProcessInfo.processInfo.systemUptime
+        noteInput(now, twitch: true)
         let pose = currentPose(now)
         let start = key.right ? pose.leftTip : pose.rightTip
         let other = key.right ? right : left
@@ -185,6 +235,7 @@ final class PetView: NSView {
         mouseDestination.x = max(65, min(82, mouseDestination.x + dx * 0.055))
         mouseDestination.y = max(226, min(240, mouseDestination.y + dy * 0.055))
         let now = ProcessInfo.processInfo.systemUptime
+        noteInput(now)
         lastMouseUse = now
         updateGaze(dx: dx, dy: dy, now: now)
         wake(now)
@@ -217,6 +268,7 @@ final class PetView: NSView {
     func clickMouse(right: Bool) {
         rightButton = right
         let now = ProcessInfo.processInfo.systemUptime
+        noteInput(now, twitch: true)
         lastMouseUse = now
         lastClick = now + (1 - mouseGrip) * 0.110
         wake(now)
@@ -224,6 +276,7 @@ final class PetView: NSView {
     func scrollMouse(_ delta: Int64) {
         guard delta != 0 else { return }
         let now = ProcessInfo.processInfo.systemUptime
+        noteInput(now)
         scrollDirection = delta > 0 ? 1 : -1
         lastScroll = now
         lastMouseUse = now
@@ -302,7 +355,8 @@ final class PetView: NSView {
                                y: mousePosition.y + 2.5 + (rightButton ? -1 : 3.2) * press - 11 * scrollDirection * scroll)
         lp = mix(lp, mouseTip, grip)
         lp.y -= sin(grip * .pi) * 5
-        return Pose(body: CGRect(x: 126 + lean.rounded(), y: 39 + dip.rounded(), width: 174, height: 181),
+        let nod = CGFloat((doze?.nod ?? 0) * 2)
+        return Pose(body: CGRect(x: 126 + lean.rounded(), y: 39 + dip.rounded() + nod, width: 174, height: 181 - nod),
                     leftTip: lp, rightTip: rp)
     }
     private func keyInfo(_ code: UInt16) -> Key {
@@ -367,23 +421,29 @@ final class PetView: NSView {
         ctx.translateBy(x: (bounds.width - 400 * scale) / 2, y: (bounds.height - 308 * scale) / 2)
         ctx.scaleBy(x: scale, y: scale)
         ctx.translateBy(x: 9, y: 0)
-        ctx.interpolationQuality = .high
+        ctx.interpolationQuality = .none
         let now = ProcessInfo.processInfo.systemUptime
         let pose = currentPose(now)
         let l = left.active ? contact(now - left.started) : 0
         let r = right.active ? contact(now - right.started) : 0
         let press = contact(now - lastClick) * smooth(mouseGrip)
         let mouseFrame = press > 0.32 ? (rightButton ? 2 : 1) : 0
-        let eyeFrame = blinkStarted.flatMap { Self.blinkFrame(elapsed: now - $0) } ?? (max(l, r) > 0.45 ? 10 : gazeFrame)
-        ctx.interpolationQuality = .none
+        let awakeEyes = blinkStarted.flatMap { Self.blinkFrame(elapsed: now - $0) } ?? (max(l, r) > 0.45 ? 10 : gazeFrame)
+        let eyeFrame = doze.map { $0.eyes == 2 ? 11 : 10 } ?? awakeEyes
+        let mouth = doze?.mouth ?? (now - mouthStarted < 0.145 ? 1 : 0)
         sprite(skin.body, pose.body, ctx)
+        if mouth > 0 {
+            let sx = pose.body.width / 100, sy = pose.body.height / 104
+            sprite(mouth == 1 ? "mouth-peep.png" : "mouth-yawn.png",
+                   CGRect(x: pose.body.minX + 45 * sx, y: pose.body.minY + 49 * sy,
+                          width: 11 * sx, height: (mouth == 1 ? 5 : 11) * sy), ctx)
+        }
         skin.drawEyes(in: pose.body, frame: eyeFrame, context: ctx)
-        ctx.interpolationQuality = .high
         drawKeyboard(ctx)
         if l > 0 { drawPressed(keyInfo(left.code), l, ctx) }
         if r > 0 { drawPressed(keyInfo(right.code), r, ctx) }
         if let mouse = mouseImage(mouseFrame) {
-            drawImage(mouse, CGRect(x: mousePosition.x - 20, y: mousePosition.y - 18,
+            drawImage(mouse, CGRect(x: mousePosition.x.rounded() - 20, y: mousePosition.y.rounded() - 18,
                                     width: 40, height: 36), ctx)
         }
         drawPaw(pose.rightTip, pose.body, true, ctx)
@@ -415,7 +475,7 @@ final class PetView: NSView {
         let grip = far ? CGFloat(0) : smooth(mouseGrip)
         let anchorX = chest.minX + (far ? 89 : 46)
         let shoulder = CGPoint(x: anchorX + max(-13, min(13, (tip.x - anchorX) * 0.30)),
-                               y: chest.minY + 153)
+                               y: chest.minY + chest.height * (153.0 / 181.0))
         let reachX = tip.x - shoulder.x, reachY = tip.y - shoulder.y
         var angle = max(-0.58, min(0.58, -atan2(reachX, reachY)))
         angle += (0.52 - angle) * grip

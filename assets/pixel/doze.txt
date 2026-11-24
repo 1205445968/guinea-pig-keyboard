@@ -1,0 +1,11 @@
+# Duration (ms), eyelids (half/closed), mouth (closed/peep/yawn), downward nod
+1000 1 0 1
+320 1 1 2
+720 2 2 3
+320 2 1 4
+1600 2 0 5
+1200 2 0 4
+1400 2 0 5
+1000 2 0 4
+800 1 0 3
+1600 1 0 1

@@ -14,7 +14,9 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" dist
 cp macos/Info.plist "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $version" "$app/Contents/Info.plist"
-cp assets/{avatar,keyboard,mouse}.png assets/pixel/guinea-pig-*.png assets/pixel/coats/*.png "$app/Contents/Resources/"
+cp assets/avatar.png assets/pixel/{guinea-pig-*,mouth-*}.png assets/pixel/coats/*.png assets/pixel/doze.txt "$app/Contents/Resources/"
+cp assets/pixel/mac-keyboard.png "$app/Contents/Resources/keyboard.png"
+cp assets/pixel/mac-mouse.png "$app/Contents/Resources/mouse.png"
 cp assets/keyboard-layout.txt "$app/Contents/Resources/keyboard-layout.txt"
 mkdir "$work/WheekKeys.iconset"
 for size in 16 32 128 256 512; do

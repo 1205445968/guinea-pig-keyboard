@@ -252,7 +252,9 @@ namespace WheekKeys
 
         private static UIElement BuildSwatch(PetSkin skin)
         {
-            return new Image { Source = PixelPetScene.Portrait(skin.PixelCoatId), Width = 14, Height = 14, Stretch = Stretch.Uniform };
+            var image = new Image { Source = PixelPetScene.Portrait(skin.PixelCoatId), Width = 14, Height = 14, Stretch = Stretch.Uniform };
+            RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.NearestNeighbor);
+            return image;
         }
 
         private Grid BuildToggleRow(string label, ToggleButton toggle)

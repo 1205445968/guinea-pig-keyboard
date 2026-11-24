@@ -107,7 +107,11 @@ import AppKit
             fatalError("No native bitmap context")
         }
         view.cacheDisplay(in: view.bounds, to: bitmap)
-        guard let png = bitmap.representation(using: .png, properties: [:]), png.count > 8000 else {
+        let visibleBody = (1..<10).contains { column in
+            let color = bitmap.colorAt(x: bitmap.pixelsWide * column / 10, y: bitmap.pixelsHigh / 2)
+            return (color?.alphaComponent ?? 0) > 0.9
+        }
+        guard visibleBody, let png = bitmap.representation(using: .png, properties: [:]) else {
             fatalError("Empty desktop pet frame")
         }
         return png
@@ -116,7 +120,7 @@ import AppKit
     var idleFrames = Set<Data>()
     let root = Bundle.main.resourceURL!
     for skin in PetSkin.all {
-        for file in [skin.body, skin.paw, "keyboard.png", "mouse.png"] {
+        for file in [skin.body, skin.paw, "keyboard.png", "mouse.png", "mouth-peep.png", "mouth-yawn.png"] {
             precondition(NSImage(contentsOf: root.appendingPathComponent(file)) != nil, "Missing sprite: \(file)")
         }
         view.selectSkin(skin.id)
@@ -156,5 +160,17 @@ import AppKit
     view.scrollMouse(-120)
     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.09))
     precondition(snapshot() != beforeScroll, "Mouse wheel did not animate")
-    print("Verified all skins, keyboard/mouse animation and idle blinking")
+    precondition(PetView.dozePose(idle: 29.99) == nil)
+    precondition(PetView.dozePose(idle: 30)?.frame.eyes == 1)
+    precondition(PetView.dozePose(idle: 31.5)?.frame.mouth == 2)
+    let restingTime = Date()
+    view.noteInput(ProcessInfo.processInfo.systemUptime)
+    RunLoop.current.run(until: restingTime.addingTimeInterval(1))
+    let resting = snapshot()
+    RunLoop.current.run(until: restingTime.addingTimeInterval(31.5))
+    precondition(snapshot() != resting, "Idle timer did not render the yawn")
+    view.pressKey(0)
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.65))
+    precondition(snapshot() == resting, "Key input did not restore the awake face")
+    print("Verified all skins, keyboard/mouse animation, blinking, idle yawn and wake-up")
 }
