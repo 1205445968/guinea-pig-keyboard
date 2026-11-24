@@ -68,7 +68,7 @@ namespace WheekKeys
         private string nickname = "";
         private bool countsDirty;
         private double nextSave;
-        private bool hideForSogou = true;
+        private bool hideForSogou = false;
         private DesktopInput input;
         private bool clickThrough;
         private bool ready;

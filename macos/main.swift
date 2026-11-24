@@ -21,7 +21,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private var scale = 1.0
     private var clickThrough = false
     private var showLabels = true
-    private var hideForSogou = true
+    private var hideForSogou = false
     private var manuallyHidden = false
     private var sogouActive = false
     private var inputTimer: Timer?
@@ -40,7 +40,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         scale = savedScale > 0 ? min(2.0, max(0.5, savedScale)) : 1.0
         clickThrough = defaults.bool(forKey: "clickThrough")
         showLabels = defaults.object(forKey: "showKeyLabels") as? Bool ?? true
-        hideForSogou = defaults.object(forKey: "hideForSogou") as? Bool ?? true
+        hideForSogou = defaults.object(forKey: "hideForSogou") as? Bool ?? false
         keyCount = min(UInt64(Int64.max), UInt64(defaults.string(forKey: "keyCount") ?? "0") ?? 0)
         clickCount = min(UInt64(Int64.max), UInt64(defaults.string(forKey: "clickCount") ?? "0") ?? 0)
 
