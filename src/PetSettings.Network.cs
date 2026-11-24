@@ -71,6 +71,13 @@ namespace WheekKeys
             state.Children.Add(statusDot);
             state.Children.Add(connection);
             controls.Children.Add(state);
+            controls.Children.Add(BuildToggleRow("同步按键和鼠标动作", MakeSwitch(owner.Network.ShareActivity,
+                delegate(bool value) { owner.Network.ShareActivity = value; })));
+            TextBlock activityHint = Label(10.5, Muted);
+            activityHint.Text = "联机时会共享具体按键，好友的小猪和键盘会出现在桌面。双方需使用新版。";
+            activityHint.TextWrapping = TextWrapping.Wrap;
+            activityHint.Margin = new Thickness(1, 0, 1, 3);
+            controls.Children.Add(activityHint);
             DockPanel join = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
             Button joinButton = ActionButton("加入", Paper2, JoinTypedRoom);
             joinButton.Margin = new Thickness(5, 0, 0, 0);
@@ -315,7 +322,7 @@ namespace WheekKeys
                 rosterHeader.Children[i].Visibility = count == 0 ? Visibility.Hidden : Visibility.Visible;
             emptyHint.Visibility = (inLan || network.RoomConnected) && count == 0 && string.IsNullOrEmpty(network.Problem)
                 ? Visibility.Visible : Visibility.Collapsed;
-            emptyHint.Text = inRoom ? "把上方房间码发给朋友，等对方加入后，小猪就会出现在这里。" : "让朋友连上同一局域网，再打开局域网发现。";
+            emptyHint.Text = inRoom ? "把上方房间码发给朋友，等对方加入后，小猪和键盘就会出现在桌面。" : "让朋友连上同一局域网，再打开局域网发现。";
             foreach (string id in partnerRows.Keys.Where(id => !network.Members.ContainsKey(id)).ToArray())
             {
                 roster.Children.Remove(partnerRows[id]);
@@ -422,6 +429,8 @@ namespace WheekKeys
                 name.Text = named ? peer.Nickname : peer.Skin.Name;
                 name.ToolTip = name.Text;
                 detail.Text = named ? peer.Skin.Name + " · " + shortId : shortId;
+                if (!peer.SupportsActivity) detail.Text += " · 旧版";
+                else if (!peer.SharingActivity) detail.Text += " · 已暂停动作";
                 SetCount(keys, peer.Keys);
                 SetCount(clicks, peer.Clicks);
             }
