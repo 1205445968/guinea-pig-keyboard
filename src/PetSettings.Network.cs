@@ -354,6 +354,12 @@ namespace WheekKeys
         {
             ImageSource image;
             if (Portraits.TryGetValue(skin, out image)) return image;
+            if (skin.PixelCoatId != null)
+            {
+                image = PixelPetScene.Portrait(skin.PixelCoatId);
+                Portraits.Add(skin, image);
+                return image;
+            }
             DrawingGroup pig = new DrawingGroup();
             using (DrawingContext dc = pig.Open())
             {

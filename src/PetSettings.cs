@@ -215,13 +215,13 @@ namespace WheekKeys
         private UIElement BuildSkins()
         {
             StackPanel section = BuildSection("毛色");
-            UniformGrid grid = new UniformGrid { Columns = 3, Rows = 2, Margin = new Thickness(-2, 2, -2, -2) };
+            UniformGrid grid = new UniformGrid { Columns = 3, Rows = 0, Margin = new Thickness(-2, 2, -2, -2) };
             foreach (PetSkin skin in PetSkin.All)
             {
                 PetSkin current = skin;
                 StackPanel content = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left };
                 content.Children.Add(BuildSwatch(current.Id));
-                content.Children.Add(new TextBlock { Text = current.Name, FontSize = 9.5, VerticalAlignment = VerticalAlignment.Center, Foreground = Ink, Margin = new Thickness(4, 0, 0, 0) });
+                content.Children.Add(new TextBlock { Text = current.Name, FontSize = 9.5, VerticalAlignment = VerticalAlignment.Center, Foreground = Ink, Margin = new Thickness(4, 0, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = current.Name });
                 Button button = MakeButton(content, Paper2, Ink, double.NaN, 29);
                 button.HorizontalContentAlignment = HorizontalAlignment.Left;
                 button.Padding = new Thickness(5, 2, 3, 2);
@@ -247,6 +247,9 @@ namespace WheekKeys
 
         private static UIElement BuildSwatch(string id)
         {
+            PetSkin skin = PetSkin.FromId(id);
+            if (skin.PixelCoatId != null)
+                return new Image { Source = PixelPetScene.Portrait(skin.PixelCoatId), Width = 14, Height = 14, Stretch = Stretch.Uniform };
             Color baseColor;
             Color patch = Colors.Transparent;
             switch (id)

@@ -93,7 +93,7 @@ namespace WheekKeys
             }
             if (now >= nextSend)
             {
-                string message = string.Format(CultureInfo.InvariantCulture, "WK1|{0}|{1}|{2}|{3}", session, skin.Id, keys, clicks);
+                string message = string.Format(CultureInfo.InvariantCulture, "WK1|{0}|{1}|{2}|{3}", session, skin.NetworkId, keys, clicks);
                 if (room == null) Broadcast(now, message);
                 else room.Publish(message);
                 string normalized;
