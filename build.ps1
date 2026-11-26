@@ -19,6 +19,7 @@ try {
         $arguments += '/reference:' + (Join-Path $frameworkDir "WPF\$assembly.dll")
     }
     $arguments += '/resource:assets/avatar.png,avatar.png'
+    $arguments += '/resource:assets/qq-group.png,qq-group.png'
     $arguments += '/resource:assets/pixel/doze.txt,doze.txt'
     $arguments += '/resource:assets/keyboard-layout.txt,keyboard-layout.txt'
     foreach ($asset in Get-ChildItem -LiteralPath 'assets/pixel' -Filter '*.png' -File) {

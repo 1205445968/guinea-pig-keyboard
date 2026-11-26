@@ -141,8 +141,15 @@ import AppKit
         return id.hasPrefix("pixel-")
     }
     precondition(skinButtons.count == 14 && skinButtons.allSatisfy { settingsView.bounds.contains(settingsView.convert($0.bounds, from: $0)) })
+    precondition(tabs.segmentCount == 3 && tabs.label(forSegment: 2) == "QQ 群")
+    tabs.selectedSegment = 2
+    tabs.sendAction(tabs.action, to: tabs.target)
+    let groupCode = descendants(settingsView).compactMap { $0 as? NSImageView }.first { $0.accessibilityLabel() == "QQ 群二维码" }
+    precondition(groupCode?.isHiddenOrHasHiddenAncestor == false && groupCode?.image?.isValid == true,
+                 "QQ 群页面缺少二维码")
     tabs.selectedSegment = 1
     tabs.sendAction(tabs.action, to: tabs.target)
+    precondition(groupCode?.isHiddenOrHasHiddenAncestor == true)
     let firstPeer = LocalPeers.Peer(skin: "pixel-longhair-gold-white", keys: 12_345, clicks: 100_000_000, seen: 10)
     settings.refresh(skinID: "pixel-tricolor", scale: 1, showLabels: true, clickThrough: false,
                      networking: true, keys: 98_765, clicks: 3,
@@ -203,8 +210,23 @@ import AppKit
     }
     guard let friend = desktop.window(for: remoteID) else { fatalError("Friend window missing") }
     precondition(desktop.count == 1 && friend.isVisible && friend.ignoresMouseEvents && delivered)
+    precondition(friend.isMovable && friend.isMovableByWindowBackground && friend.contentView?.mouseDownCanMoveWindow == true,
+                 "好友窗口未启用背景拖动")
+    let initialOrigin = friend.frame.origin
+    owner.setFrameOrigin(NSPoint(x: owner.frame.minX, y: owner.frame.minY + 12))
     desktop.update(owner: owner, members: [remoteID: firstPeer], clickThrough: false, showLabels: false) { _ in [] }
     precondition(desktop.window(for: remoteID) === friend && !friend.ignoresMouseEvents, "Refresh replaced friend")
+    let arrangedOrigin = friend.frame.origin
+    precondition(arrangedOrigin != initialOrigin, "未拖动的好友窗口应随本机桌宠重新排布")
+    friend.setFrameOrigin(NSPoint(x: arrangedOrigin.x + 12, y: arrangedOrigin.y + 12))
+    let movedOrigin = friend.frame.origin
+    precondition(movedOrigin != arrangedOrigin)
+    desktop.update(owner: owner, members: [remoteID: firstPeer], clickThrough: false, showLabels: false) { _ in [.key(0)] }
+    precondition(friend.frame.origin == movedOrigin, "联机刷新重置了好友窗口位置")
+    owner.setContentSize(NSSize(width: 290, height: 220))
+    desktop.update(owner: owner, members: [remoteID: firstPeer], clickThrough: false, showLabels: false) { _ in [] }
+    precondition(friend.frame.origin == movedOrigin && friend.frame.size == owner.frame.size,
+                 "好友窗口应跟随缩放并保留拖动后的位置")
     owner.orderOut(nil)
     desktop.update(owner: owner, members: [remoteID: firstPeer], clickThrough: false, showLabels: true) { _ in [] }
     precondition(!friend.isVisible, "Friend remained visible after owner hid")

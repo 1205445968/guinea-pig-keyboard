@@ -11,8 +11,10 @@ final class FriendDesktop {
         let pet: PetView
         let name: NSTextField
         var skinID: String?
-        init(size: NSSize) {
-            window = FriendPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        private var automaticOrigin: NSPoint?
+
+        init(frame: NSRect) {
+            window = FriendPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
             window.isOpaque = false
             window.backgroundColor = .clear
@@ -20,7 +22,9 @@ final class FriendDesktop {
             window.hidesOnDeactivate = false
             window.level = .floating
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-            pet = PetView(frame: NSRect(origin: .zero, size: size))
+            window.isMovable = true
+            window.isMovableByWindowBackground = true
+            pet = PetView(frame: NSRect(origin: .zero, size: frame.size))
             pet.autoresizingMask = [.width, .height]
             name = NSTextField(labelWithString: "")
             name.alignment = .center
@@ -32,6 +36,16 @@ final class FriendDesktop {
             name.layer?.cornerRadius = 6
             pet.addSubview(name)
             window.contentView = pet
+            automaticOrigin = window.frame.origin
+        }
+
+        func layout(at frame: NSRect) {
+            let current = window.frame
+            // 移离上次自动排布的位置后，保留窗口当前位置。
+            let followsAutomaticLayout = automaticOrigin == current.origin
+            let target = NSRect(origin: followsAutomaticLayout ? frame.origin : current.origin, size: frame.size)
+            if current != target { window.setFrame(target, display: true) }
+            automaticOrigin = followsAutomaticLayout ? window.frame.origin : nil
         }
     }
     private var friends: [String: Friend] = [:]
@@ -46,7 +60,7 @@ final class FriendDesktop {
         let frames = Self.frames(around: owner.frame, within: visible, count: ids.count)
         for (id, frame) in zip(ids, frames) {
             guard let peer = members[id] else { continue }
-            let friend = friends[id] ?? Friend(size: frame.size)
+            let friend = friends[id] ?? Friend(frame: frame)
             friends[id] = friend
             if friend.skinID != peer.skin {
                 friend.pet.selectSkin(peer.skin)
@@ -58,7 +72,7 @@ final class FriendDesktop {
             else if !peer.sharingActivity { label += " · 已暂停动作" }
             if friend.name.stringValue != label { friend.name.stringValue = label }
             friend.window.ignoresMouseEvents = clickThrough
-            if friend.window.frame != frame { friend.window.setFrame(frame, display: true) }
+            friend.layout(at: frame)
             let labelWidth = min(frame.width - 12, friend.name.intrinsicContentSize.width + 14)
             friend.name.frame = NSRect(x: (frame.width - labelWidth) / 2, y: 6, width: labelWidth, height: 18)
             let actions = takeActions(id)

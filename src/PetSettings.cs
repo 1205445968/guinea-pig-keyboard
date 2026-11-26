@@ -103,11 +103,14 @@ namespace WheekKeys
 
             ScrollViewer petPage = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             networkPage = BuildNetworkPage();
+            DockPanel groupPage = BuildGroupPage();
             Grid.SetRow(petPage, 2);
             Grid.SetRow(networkPage, 2);
+            Grid.SetRow(groupPage, 2);
             layout.Children.Add(petPage);
             layout.Children.Add(networkPage);
-            Border tabs = BuildTabs(petPage, networkPage);
+            layout.Children.Add(groupPage);
+            Border tabs = BuildTabs(petPage, networkPage, groupPage);
             Grid.SetRow(tabs, 1);
             layout.Children.Add(tabs);
 
@@ -158,12 +161,13 @@ namespace WheekKeys
             RefreshState();
         }
 
-        private Border BuildTabs(UIElement petPage, UIElement lanPage)
+        private Border BuildTabs(UIElement petPage, UIElement lanPage, UIElement groupPage)
         {
-            UniformGrid tabs = new UniformGrid { Rows = 1, Columns = 2 };
+            UniformGrid tabs = new UniformGrid { Rows = 1, Columns = 3 };
             RadioButton petTab = PageTab("桌宠", petPage);
             tabs.Children.Add(petTab);
             tabs.Children.Add(PageTab("联机", lanPage));
+            tabs.Children.Add(PageTab("QQ 群", groupPage));
             petTab.IsChecked = true;
             return new Border { Background = Paper2, Padding = new Thickness(3), CornerRadius = new CornerRadius(10),
                 Margin = new Thickness(0, 7, 0, 8), Child = tabs };
@@ -193,6 +197,21 @@ namespace WheekKeys
             return tab;
         }
 
+        private static DockPanel BuildGroupPage()
+        {
+            DockPanel page = new DockPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            TextBlock hint = Label(12, Muted);
+            hint.Text = "用手机 QQ 扫码加群";
+            hint.TextAlignment = TextAlignment.Center;
+            hint.Margin = new Thickness(0, 0, 0, 10);
+            DockPanel.SetDock(hint, Dock.Top);
+            page.Children.Add(hint);
+            Image code = new Image { Source = LoadSettingsImage("qq-group.png"), MaxWidth = 224, MaxHeight = 224, Stretch = Stretch.Uniform };
+            AutomationProperties.SetName(code, "QQ 群二维码");
+            page.Children.Add(code);
+            return page;
+        }
+
         internal void PlaceAt(double left, double top)
         {
             Left = left;
@@ -207,7 +226,7 @@ namespace WheekKeys
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
             Image avatar = new Image { Width = 31, Height = 31, Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 9, 0) };
-            avatar.Source = LoadAvatar();
+            avatar.Source = LoadSettingsImage("avatar.png");
             Grid.SetColumn(avatar, 0);
             row.Children.Add(avatar);
 
@@ -455,11 +474,11 @@ namespace WheekKeys
             }
         }
 
-        private static BitmapSource LoadAvatar()
+        private static BitmapSource LoadSettingsImage(string resource)
         {
             try
             {
-                using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("avatar.png"))
+                using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resource))
                 {
                     if (stream == null) return null;
                     BitmapImage image = new BitmapImage();

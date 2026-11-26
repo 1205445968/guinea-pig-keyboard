@@ -83,10 +83,11 @@ final class PetSettingsViewController: NSViewController {
 
     private let shareSwitch = NSButton(checkboxWithTitle: "同步按键和鼠标动作", target: nil, action: nil)
     private let networkSwitch = NSButton(checkboxWithTitle: "开启局域网联机", target: nil, action: nil)
-    private let tabs = NSSegmentedControl(labels: ["桌宠", "联机"], trackingMode: .selectOne, target: nil, action: nil)
+    private let tabs = NSSegmentedControl(labels: ["桌宠", "联机", "QQ 群"], trackingMode: .selectOne, target: nil, action: nil)
     private let petScroll = NSScrollView()
     private let petPage = FlippedView()
     private let lanPage = NSView()
+    private let groupPage = NSView()
     private let createRoom = NSButton(title: "创建房间", target: nil, action: nil)
     private let joinCode = NSTextField()
     private let joinRoom = NSButton(title: "加入", target: nil, action: nil)
@@ -176,6 +177,21 @@ final class PetSettingsViewController: NSViewController {
         add(petScroll, x: 0, top: 100, width: 316, height: 352, to: root)
         add(lanPage, x: 0, top: 100, width: 316, height: 352, to: root)
         lanPage.isHidden = true
+        add(groupPage, x: 18, top: 100, width: 280, height: 352, to: root)
+        groupPage.isHidden = true
+
+        let groupHint = NSTextField(labelWithString: "用手机 QQ 扫码加群")
+        groupHint.font = .systemFont(ofSize: 12)
+        groupHint.textColor = mutedBrown
+        groupHint.alignment = .center
+        add(groupHint, x: 0, top: 43, width: 280, height: 18, to: groupPage)
+        let groupCode = NSImageView()
+        if let url = Bundle.main.url(forResource: "qq-group", withExtension: "png") {
+            groupCode.image = NSImage(contentsOf: url)
+        }
+        groupCode.imageScaling = .scaleProportionallyUpOrDown
+        groupCode.setAccessibilityLabel("QQ 群二维码")
+        add(groupCode, x: 28, top: 71, width: 224, height: 224, to: groupPage)
 
         let coatLabel = sectionLabel("毛色")
         add(coatLabel, x: 18, top: 14, width: 200, height: 18, to: petPage)
@@ -404,6 +420,7 @@ final class PetSettingsViewController: NSViewController {
     @objc private func changeTab() {
         petScroll.isHidden = tabs.selectedSegment != 0
         lanPage.isHidden = tabs.selectedSegment != 1
+        groupPage.isHidden = tabs.selectedSegment != 2
     }
 
     @objc private func selectSkin(_ sender: NSButton) {

@@ -151,6 +151,14 @@ jobs:
           - 修复 Windows 把同一房间里的 Mac 好友显示为「旧版 · 仅外观」的问题。
           '@
             $notes = $changes + "`n`n" + $notes
+          } elseif ($env:RELEASE_TAG -eq 'v0.1.6') {
+            $changes = @'
+          - 修复 macOS 无法拖动联机好友的问题。关闭鼠标穿透后可拖动好友，联机刷新会保留摆放位置。
+          - Windows 和 macOS 设置新增「QQ 群」标签，可用手机 QQ 扫码加群。
+          - 启动或打开设置时自动检查更新，发现新版后可从设置中更新。
+          - 默认桌宠大小调整为 58%，外观统一为像素系列。Windows 新增键鼠皮肤，移除搜狗输入法自动隐藏选项。
+          '@
+            $notes = $changes + "`n`n" + $notes
           }
           $notes | gh release edit $env:RELEASE_TAG --notes-file - --draft=false
           if ($LASTEXITCODE -ne 0) { throw 'Could not publish release.' }
