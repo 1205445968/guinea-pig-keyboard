@@ -55,16 +55,26 @@ namespace WheekKeys
             internal long ActionSequence;
             internal long InteractionSequence;
             internal readonly Queue<PeerAction> Actions = new Queue<PeerAction>();
+            private double nextActionAt;
 
             public bool TryTakeAction(double now, out PeerAction action)
             {
-                while (Actions.Count > 0)
+                while (SharingActivity && now >= nextActionAt && Actions.Count > 0)
                 {
                     action = Actions.Dequeue();
-                    if (SharingActivity && now - action.Received <= 0.8) return true;
+                    if (now - action.Received > 0.8) continue;
+                    // 给握鼠和点击动画留时间，避免被紧随的按键打断。
+                    nextActionAt = now + (action.Kind == 'k' ? 0.055 : 0.18);
+                    return true;
                 }
                 action = new PeerAction();
                 return false;
+            }
+
+            internal void ClearActions()
+            {
+                Actions.Clear();
+                nextActionAt = 0;
             }
         }
 
@@ -319,7 +329,7 @@ namespace WheekKeys
                     { existing.Skin = existing.NetworkSkin; existing.HasAppearance = false; }
                     existing.SupportsActivity = true;
                     existing.SharingActivity = fields[3] == "1";
-                    if (!existing.SharingActivity) existing.Actions.Clear();
+                    if (!existing.SharingActivity) existing.ClearActions();
                     existing.Seen = now;
                 }
                 else ReadActions(fields, existing, now);
@@ -346,6 +356,7 @@ namespace WheekKeys
             {
                 if (peers.Count >= 64) return;
                 peers.Add(id, peer = new Peer());
+                RefreshState();
             }
             peer.Seen = now;
             peer.NetworkSkin = skin;

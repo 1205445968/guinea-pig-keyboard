@@ -31,9 +31,11 @@ internal static class FriendNetworkSmokeTest
             Check(skin != null, "test skin exists"); string skinId = "pixel-longhair-chocolate";
             MethodInfo tick = networkType.GetMethod("Tick");
             tick.Invoke(a, new object[] { 1.0, skin, 31L, 7L, "花生" });
-            tick.Invoke(b, new object[] { 1.0, skin, 0L, 0L, "小豆" });
-            tick.Invoke(a, new object[] { 1.1, skin, 31L, 7L, "花生" });
+            while (sb.Poll(0, SelectMode.SelectRead)) sb.Receive(new byte[129]);
             tick.Invoke(b, new object[] { 1.1, skin, 0L, 0L, "小豆" });
+            tick.Invoke(a, new object[] { 1.1, skin, 31L, 7L, "花生" });
+            tick.Invoke(a, new object[] { 1.13, skin, 31L, 7L, "花生" });
+            tick.Invoke(b, new object[] { 1.13, skin, 0L, 0L, "小豆" });
             IDictionary peers = (IDictionary)networkType.GetProperty("Members").GetValue(b, null);
             Check(peers.Count == 1, "real UDP peer discovery");
             object peer = null; foreach (DictionaryEntry item in peers) peer = item.Value;
@@ -45,9 +47,14 @@ internal static class FriendNetworkSmokeTest
             recordClick.Invoke(a, new object[] { false, 1.2 }); recordClick.Invoke(a, new object[] { true, 1.2 });
             tick.Invoke(a, new object[] { 1.2, skin, 31L, 7L, "花生" }); tick.Invoke(b, new object[] { 1.2, skin, 0L, 0L, "小豆" });
             MethodInfo take = peer.GetType().GetMethod("TryTakeAction"); string[] expected = { "k30", "k31", "l", "r" };
-            foreach (string action in expected) Check(Take(take, peer, 1.2) == action, "UDP action " + action);
-            Check(Take(take, peer, 1.2) == null, "no self or extra action");
+            Check(Take(take, peer, 1.2) == expected[0] && Take(take, peer, 1.23) == null, "batch leaves key animation visible");
+            Check(Take(take, peer, 1.26) == expected[1] && Take(take, peer, 1.32) == expected[2], "keys and left mouse replay in order");
+            Check(Take(take, peer, 1.45) == null && Take(take, peer, 1.51) == expected[3], "clicks have separate animation time");
+            Check(Take(take, peer, 1.68) == null, "no extra action while click finishes");
 
+            object reversePeer = null;
+            foreach (DictionaryEntry item in (IDictionary)networkType.GetProperty("Members").GetValue(a, null)) reversePeer = item.Value;
+            Check(reversePeer != null, "both sides discovered after staggered join");
             MethodInfo read = networkType.GetMethod("ReadPeer", PrivateInstance);
             string session = (string)networkType.GetField("session", PrivateInstance).GetValue(a);
             int queued = QueueCount(peer);
@@ -55,7 +62,7 @@ internal static class FriendNetworkSmokeTest
             read.Invoke(b, new object[] { "WA1|" + session + "|" + nextSequence + "|k30", 1.3 });
             read.Invoke(b, new object[] { "WA1|" + session + "|" + nextSequence + "|k31", 1.3 });
             read.Invoke(b, new object[] { "WA1|" + session + "|" + (nextSequence - 1) + "|k31", 1.3 });
-            Check(QueueCount(peer) == queued + 1 && Take(take, peer, 1.3) == "k30", "duplicate and out-of-order sequences ignored");
+            Check(QueueCount(peer) == queued + 1 && Take(take, peer, 1.7) == "k30", "duplicate and out-of-order sequences ignored");
             Reject(read, b, "WA1|ffffffffffffffffffffffffffffffff|9|k30", 1.4, peer, "unknown session");
             Reject(read, b, "WA1|" + session + "|" + (nextSequence + 1) + "|k999", 1.4, peer, "invalid scan");
             Reject(read, b, "WA1|" + session + "|" + (nextSequence + 1) + "|l,l,l,l,l,l,l,l,l,l,l,l,l", 1.4, peer, "too many actions");
@@ -67,11 +74,26 @@ internal static class FriendNetworkSmokeTest
             read.Invoke(b, new object[] { "WS1|" + session + "|" + skinId + "|1", 1.6 });
             read.Invoke(b, new object[] { "WA1|" + session + "|4|l", 1.6 });
             Check(Take(take, peer, 2.5) == null, "expired action discarded");
+            recordClick.Invoke(b, new object[] { true, 2.5 });
+            recordKey.Invoke(b, new object[] { 328, 2.5 });
+            tick.Invoke(b, new object[] { 2.5, skin, 0L, 0L, "小豆" });
+            tick.Invoke(a, new object[] { 2.5, skin, 31L, 7L, "花生" });
+            Check(Take(take, reversePeer, 2.5) == "r" && Take(take, reversePeer, 2.65) == null &&
+                Take(take, reversePeer, 2.7) == "k328", "reverse UDP click then extended key");
             networkType.GetProperty("ShareActivity").SetValue(a, false, null);
             recordKey.Invoke(a, new object[] { 30, 2.6 });
             Check(PendingCount(a, networkType) == 0, "local sharing disabled does not queue recording");
+            tick.Invoke(a, new object[] { 2.6, skin, 32L, 7L, "花生" });
+            tick.Invoke(b, new object[] { 2.6, skin, 0L, 0L, "小豆" });
+            Check(!(bool)peer.GetType().GetField("SharingActivity").GetValue(peer), "pause propagates to the other peer");
+            Set(networkType, a, "actionSequence", 4L);
+            networkType.GetProperty("ShareActivity").SetValue(a, true, null);
+            recordKey.Invoke(a, new object[] { 30, 2.8 });
+            tick.Invoke(a, new object[] { 2.8, skin, 33L, 7L, "花生" });
+            tick.Invoke(b, new object[] { 2.8, skin, 0L, 0L, "小豆" });
+            Check((bool)peer.GetType().GetField("SharingActivity").GetValue(peer) && Take(take, peer, 2.8) == "k30", "resume propagates and the first new action arrives");
             ((IDisposable)b).Dispose(); Check(((IDictionary)networkType.GetProperty("Members").GetValue(b, null)).Count == 0 && QueueCount(peer) == 0, "dispose clears peer state and actions");
-            Console.WriteLine("PASS: UDP WK1/WS1/WN1/WA1, ordering, rejection, expiry, pause and disposal");
+            Console.WriteLine("PASS: late UDP join, bidirectional keys/clicks, paced replay, order, pause/resume and disposal");
             return 0;
         }
         catch (Exception e) { Console.Error.WriteLine("FAIL: " + e); return 1; }

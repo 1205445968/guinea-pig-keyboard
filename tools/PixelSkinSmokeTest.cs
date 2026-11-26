@@ -65,6 +65,18 @@ internal static class PixelSkinSmokeTest
             }
             IDictionary desks = (IDictionary)Field(settings, "deskSkinButtons");
             Check(desks.Count == 3, "three pixel desk skins");
+            object network = windowType.GetProperty("Network", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(owner, null);
+            network.GetType().GetMethod("ReadPeer", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(network,
+                new object[] { "WK1|11111111111111111111111111111111|gold-white|1|2", 1.0 });
+            object friendDesktop = Field(owner, "friends");
+            MethodInfo updateFriends = friendDesktop.GetType().GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic);
+            ((Window)owner).Opacity = 0;
+            ((Window)owner).Show();
+            updateFriends.Invoke(friendDesktop, new object[] { network, 1.0, false, true, false });
+            object friend = ((IDictionary)Field(friendDesktop, "windows")).Values.Cast<object>().Single();
+            object friendScene = Field(friend, "scene");
+            PropertyInfo friendDesk = friendScene.GetType().GetProperty("Desk");
+            object originalFriendDesk = friendDesk.GetValue(friendScene, null);
             foreach (string id in new[] { "meadow", "peach", "mocha" })
             {
                 Check(desks.Contains(id), "desk button " + id);
@@ -72,6 +84,9 @@ internal static class PixelSkinSmokeTest
                 object activeDesk = windowType.GetProperty("ActiveDeskSkin", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(owner, null);
                 Check((string)activeDesk.GetType().GetField("Id").GetValue(activeDesk) == id, "selected desk " + id);
                 Check(File.ReadAllLines(profile)[11] == id, "saved desk " + id);
+                Check(ReferenceEquals(friendDesk.GetValue(friendScene, null), originalFriendDesk), "local desk selection preserves the friend's desk");
+                updateFriends.Invoke(friendDesktop, new object[] { network, 1.03, false, true, false });
+                Check(ReferenceEquals(friendDesk.GetValue(friendScene, null), originalFriendDesk), "network refresh preserves the friend's desk");
             }
             MethodInfo fromId = skinType.GetMethod("FromId", BindingFlags.Static | BindingFlags.Public);
             object oldAlias = fromId.Invoke(null, new object[] { "longhair-buff" });
@@ -98,6 +113,7 @@ internal static class PixelSkinSmokeTest
             CheckPacks(assembly);
             CheckRenderLifecycle(assembly);
             CheckNetworkCompatibility(assembly);
+            CheckReleaseSelection(assembly);
             Console.WriteLine("PASS: settings labels and roundtrips, 14 pixel skin buttons, wheel animation, render lifecycle, legacy aliases, peer names and counters");
             return 0;
         }
@@ -121,6 +137,25 @@ internal static class PixelSkinSmokeTest
     private static void Check(bool condition, string label)
     {
         if (!condition) throw new InvalidOperationException("Check failed: " + label);
+    }
+
+    private static void CheckReleaseSelection(Assembly app)
+    {
+        Type updater = app.GetType("WheekKeys.AppUpdater", true);
+        const BindingFlags methods = BindingFlags.Static | BindingFlags.NonPublic;
+        const string page = "https://github.com/gwtt/guinea-pig-keyboard/releases/tag/v0.1.6";
+        MethodInfo newer = updater.GetMethod("IsNewer", methods);
+        object fallback = updater.GetMethod("ParseReleasePage", methods).Invoke(null, new object[] { new Uri(page) });
+        Check((bool)Field(fallback, "OpenReleasePage") && ((Uri)Field(fallback, "Download")).AbsoluteUri == page,
+            "fallback opens the official release page");
+        string version = (string)Field(fallback, "Version");
+        Check((bool)newer.Invoke(null, new object[] { version, "0.1.5" }) &&
+            !(bool)newer.Invoke(null, new object[] { version, "0.1.6" }), "release page does not update to the same version");
+        object manifest = updater.GetMethod("ParseRelease", methods).Invoke(null, new object[] {
+            "{\"tag_name\":\"v0.1.6\",\"assets\":[{\"name\":\"test.exe\",\"browser_download_url\":\"https://example.test/test.exe\"}," +
+            "{\"name\":\"WheekKeys.exe\",\"browser_download_url\":\"https://example.test/WheekKeys.exe\",\"digest\":\"sha256:" + new string('a', 64) + "\"}]}" });
+        Check(!((bool)Field(manifest, "OpenReleasePage")) && ((Uri)Field(manifest, "Download")).AbsolutePath == "/WheekKeys.exe" &&
+            (string)Field(manifest, "Sha256") == new string('a', 64), "updater selects the Windows asset and its checksum");
     }
 
     private static void CheckSettingsLabels(Window settings, Assembly app, object owner)

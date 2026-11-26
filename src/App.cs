@@ -20,8 +20,8 @@ using Rectangle = System.Windows.Shapes.Rectangle;
 
 [assembly: AssemblyProduct("WheekKeys")]
 [assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8")]
-[assembly: AssemblyVersion("0.1.6.0")]
-[assembly: AssemblyInformationalVersion("0.1.6")]
+[assembly: AssemblyVersion("0.1.7.0")]
+[assembly: AssemblyInformationalVersion("0.1.7")]
 
 namespace WheekKeys
 {
@@ -143,7 +143,7 @@ namespace WheekKeys
                 if (!pressed && input != null) input.ClearHeldAlt();
                 SetAltHeld(pressed);
                 peers.Tick(now, scene.Skin, keyCount, clickCount, nickname);
-                friends.Update(peers, now, clickThrough, scene.ShowKeyLabels, altHeld, scene.Desk);
+                friends.Update(peers, now, clickThrough, scene.ShowKeyLabels, altHeld);
                 LocalPeers.ReceivedInteraction interaction;
                 if (peers.TryTakeReceivedInteraction(out interaction))
                 {
@@ -377,7 +377,6 @@ namespace WheekKeys
         internal void SetDeskSkin(DeskSkin desk)
         {
             scene.Desk = desk;
-            friends.SetDeskSkin(scene.Desk);
             RefreshTrayMenu();
             SaveSettings();
         }

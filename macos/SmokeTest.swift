@@ -14,6 +14,11 @@ import AppKit
     precondition((try! PetUpdateChecker.updateURL(data: releaseData("v0.2.0", host: "example.com"), currentVersion: "0.1.5")) == nil)
     precondition((try! PetUpdateChecker.updateURL(data: releaseData("v0.2.0", prerelease: true), currentVersion: "0.1.5")) == nil)
     precondition((try? PetUpdateChecker.updateURL(data: releaseData("v0.2.0-beta"), currentVersion: "0.1.5")) == nil)
+    let releasePage = URL(string: "https://github.com/gwtt/guinea-pig-keyboard/releases/tag/v0.1.6")!
+    precondition((try! PetUpdateChecker.updateURL(releasePage: releasePage, currentVersion: "0.1.5"))?.lastPathComponent == "WheekKeys-macOS.zip")
+    precondition((try! PetUpdateChecker.updateURL(releasePage: releasePage, currentVersion: "0.1.6")) == nil)
+    let otherReleasePage = URL(string: "https://github.com/example/guinea-pig-keyboard/releases/tag/v0.1.6")!
+    precondition((try? PetUpdateChecker.updateURL(releasePage: otherReleasePage, currentVersion: "0.1.5")) == nil)
     precondition(initialPetScale(0) == 0.58 && initialPetScale(-1) == 0.58)
     precondition(initialPetScale(1.25) == 1.25 && initialPetScale(0.1) == 0.5 && initialPetScale(3) == 2)
     let ownID = String(repeating: "a", count: 32)
@@ -87,16 +92,27 @@ import AppKit
     precondition(apply(appearance, now: 16) && apply(action, now: 16))
     precondition(apply(valid, now: 16.1) && namedPeers[remoteID]?.skin == "pixel-tricolor")
     precondition(!apply(action, now: 16.2) && !apply("WA1|\(remoteID)|2|k0,l", now: 16.2))
-    precondition(namedPeers[remoteID]?.takeActions(now: 16.2) == [.key(0), .key(126), .click(false), .click(true)])
+    precondition(namedPeers[remoteID]?.takeAction(now: 16.2) == .key(0))
+    precondition(namedPeers[remoteID]?.takeAction(now: 16.23) == nil)
+    precondition(namedPeers[remoteID]?.takeAction(now: 16.26) == .key(126))
+    precondition(namedPeers[remoteID]?.takeAction(now: 16.32) == .click(false))
+    precondition(namedPeers[remoteID]?.takeAction(now: 16.45) == nil)
+    precondition(namedPeers[remoteID]?.takeAction(now: 16.51) == .click(true))
     precondition(apply("WA1|\(remoteID)|2|k57", now: 17))
-    precondition(namedPeers[remoteID]?.takeActions(now: 17.9) == [])
+    precondition(namedPeers[remoteID]?.takeAction(now: 17.9) == nil)
     precondition(apply("WA1|\(remoteID)|3|r", now: 18))
     precondition(apply("WS1|\(remoteID)|drawn-tricolor|0", now: 18))
     precondition(namedPeers[remoteID]?.supportsActivity == true && namedPeers[remoteID]?.sharingActivity == false)
-    precondition(!apply("WA1|\(remoteID)|4|l", now: 18) && namedPeers[remoteID]?.takeActions(now: 18) == [])
+    precondition(!apply("WA1|\(remoteID)|4|l", now: 18) && namedPeers[remoteID]?.takeAction(now: 18) == nil)
+    precondition(apply("WS1|\(remoteID)|drawn-tricolor|1", now: 18.1))
+    precondition(apply("WA1|\(remoteID)|5|r,k349", now: 18.1))
+    precondition(namedPeers[remoteID]?.takeAction(now: 18.1) == .click(true))
+    precondition(namedPeers[remoteID]?.takeAction(now: 18.2) == nil)
+    precondition(namedPeers[remoteID]?.takeAction(now: 18.3) == .key(110))
     precondition(!apply("WS1|\(ownID)|drawn-tricolor|1", now: 18) && namedPeers.count == 1)
     precondition(NetworkKeyCodes.scan(for: 0) == 30 && NetworkKeyCodes.scan(for: 49) == 57 &&
-                 NetworkKeyCodes.scan(for: 62) == 285 && NetworkKeyCodes.scan(for: 76) == 284)
+                 NetworkKeyCodes.scan(for: 62) == 285 && NetworkKeyCodes.scan(for: 76) == 284 &&
+                 NetworkKeyCodes.scan(for: 110) == 349)
     print("Verified cross-platform activity packets, key codes, pause and expiry")
     _ = NSApplication.shared
     let settings = PetSettingsViewController()
@@ -206,7 +222,7 @@ import AppKit
     var delivered = false
     desktop.update(owner: owner, members: [remoteID: firstPeer], clickThrough: true, showLabels: true) { id in
         delivered = id == remoteID
-        return [.key(0), .click(false), .click(true)]
+        return .key(0)
     }
     guard let friend = desktop.window(for: remoteID) else { fatalError("Friend window missing") }
     precondition(desktop.count == 1 && friend.isVisible && friend.ignoresMouseEvents && delivered)
@@ -214,23 +230,23 @@ import AppKit
                  "好友窗口未启用背景拖动")
     let initialOrigin = friend.frame.origin
     owner.setFrameOrigin(NSPoint(x: owner.frame.minX, y: owner.frame.minY + 12))
-    desktop.update(owner: owner, members: [remoteID: firstPeer], clickThrough: false, showLabels: false) { _ in [] }
+    desktop.update(owner: owner, members: [remoteID: firstPeer], clickThrough: false, showLabels: false) { _ in nil }
     precondition(desktop.window(for: remoteID) === friend && !friend.ignoresMouseEvents, "Refresh replaced friend")
     let arrangedOrigin = friend.frame.origin
     precondition(arrangedOrigin != initialOrigin, "未拖动的好友窗口应随本机桌宠重新排布")
     friend.setFrameOrigin(NSPoint(x: arrangedOrigin.x + 12, y: arrangedOrigin.y + 12))
     let movedOrigin = friend.frame.origin
     precondition(movedOrigin != arrangedOrigin)
-    desktop.update(owner: owner, members: [remoteID: firstPeer], clickThrough: false, showLabels: false) { _ in [.key(0)] }
+    desktop.update(owner: owner, members: [remoteID: firstPeer], clickThrough: false, showLabels: false) { _ in .key(0) }
     precondition(friend.frame.origin == movedOrigin, "联机刷新重置了好友窗口位置")
     owner.setContentSize(NSSize(width: 290, height: 220))
-    desktop.update(owner: owner, members: [remoteID: firstPeer], clickThrough: false, showLabels: false) { _ in [] }
+    desktop.update(owner: owner, members: [remoteID: firstPeer], clickThrough: false, showLabels: false) { _ in nil }
     precondition(friend.frame.origin == movedOrigin && friend.frame.size == owner.frame.size,
                  "好友窗口应跟随缩放并保留拖动后的位置")
     owner.orderOut(nil)
-    desktop.update(owner: owner, members: [remoteID: firstPeer], clickThrough: false, showLabels: true) { _ in [] }
+    desktop.update(owner: owner, members: [remoteID: firstPeer], clickThrough: false, showLabels: true) { _ in nil }
     precondition(!friend.isVisible, "Friend remained visible after owner hid")
-    desktop.update(owner: owner, members: [:], clickThrough: false, showLabels: true) { _ in [] }
+    desktop.update(owner: owner, members: [:], clickThrough: false, showLabels: true) { _ in nil }
     precondition(desktop.count == 0, "Leaving did not remove friend")
     desktop.close()
     owner.close()

@@ -29,10 +29,10 @@ namespace WheekKeys
 
         public void Update(LocalPeers network, double now, bool clickThrough, bool showLabels)
         {
-            Update(network, now, clickThrough, showLabels, false, DeskSkin.Default);
+            Update(network, now, clickThrough, showLabels, false);
         }
 
-        internal void Update(LocalPeers network, double now, bool clickThrough, bool showLabels, bool altBypass, DeskSkin desk = null)
+        internal void Update(LocalPeers network, double now, bool clickThrough, bool showLabels, bool altBypass)
         {
             if (disposed) return;
             foreach (string id in windows.Keys.Where(x => network == null || !network.Members.ContainsKey(x)).ToArray())
@@ -51,15 +51,9 @@ namespace WheekKeys
                         delegate(string kind, double when) { return network.TrySendInteraction(id, kind, when); }));
                 }
                 view.SetPointerMode(clickThrough, altBypass);
-                if (desk != null) view.SetDeskSkin(desk);
                 view.Update(pair.Value, now, showLabels);
                 view.SetOwnerVisible(owner.IsVisible);
             }
-        }
-
-        internal void SetDeskSkin(DeskSkin desk)
-        {
-            foreach (FriendWindow view in windows.Values) view.SetDeskSkin(desk);
         }
 
         internal void SetPointerMode(bool clickThrough, bool altBypass)
@@ -161,11 +155,6 @@ namespace WheekKeys
                 overlay.Show(kind == "feed" ? "送出一片草叶 ☘" : "轻轻戳了一下 ♡");
             }
 
-            internal void SetDeskSkin(DeskSkin desk)
-            {
-                scene.Desk = desk;
-            }
-
             private void PlaceNear(Window owner, int slot)
             {
                 Rect area = WindowPlacement.WorkArea(owner);
@@ -210,13 +199,13 @@ namespace WheekKeys
                 scene.Skin = peer.Skin;
                 if (scene.ShowKeyLabels != showLabels) scene.ShowKeyLabels = showLabels;
                 MatchSize();
-                int count = 0; LocalPeers.PeerAction action;
-                while (count++ < 2 && peer.TryTakeAction(now, out action))
-                    if (window.Owner.IsVisible)
-                    {
-                        if (action.Kind == 'k') scene.PressKey(action.Scan);
-                        else if (action.Kind == 'l' || action.Kind == 'r') scene.ClickMouse(action.Kind == 'r');
-                    }
+                LocalPeers.PeerAction action;
+                if (!window.Owner.IsVisible) peer.ClearActions();
+                else if (peer.TryTakeAction(now, out action))
+                {
+                    if (action.Kind == 'k') scene.PressKey(action.Scan);
+                    else scene.ClickMouse(action.Kind == 'r');
+                }
                 string name = String.IsNullOrEmpty(peer.Nickname) ? peer.Skin.Name : peer.Nickname;
                 label.Text = name;
                 if (!peer.SupportsActivity) label.Text += " · 旧版 · 仅外观";

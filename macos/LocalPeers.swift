@@ -18,6 +18,7 @@ final class LocalPeers {
         fileprivate var hasAppearance = false
         fileprivate var actionSequence: UInt64 = 0
         fileprivate var actions: [(action: Action, time: TimeInterval)] = []
+        private var nextActionAt: TimeInterval = 0
 
         init(skin: String, keys: UInt64, clicks: UInt64, seen: TimeInterval) {
             self.skin = skin
@@ -26,10 +27,20 @@ final class LocalPeers {
             self.seen = seen
         }
 
-        mutating func takeActions(now: TimeInterval) -> [Action] {
-            defer { actions.removeAll(keepingCapacity: true) }
-            guard sharingActivity else { return [] }
-            return actions.filter { now - $0.time <= LocalPeers.actionLifetime }.map { $0.action }
+        mutating func takeAction(now: TimeInterval) -> Action? {
+            guard sharingActivity, now >= nextActionAt else { return nil }
+            actions.removeAll { now - $0.time > LocalPeers.actionLifetime }
+            guard !actions.isEmpty else { return nil }
+            let action = actions.removeFirst().action
+            // 给握鼠和点击动画留时间，避免被紧随的按键打断。
+            if case .click = action { nextActionAt = now + 0.18 }
+            else { nextActionAt = now + 0.055 }
+            return action
+        }
+
+        fileprivate mutating func clearActions() {
+            actions.removeAll(keepingCapacity: true)
+            nextActionAt = 0
         }
     }
 
@@ -52,7 +63,7 @@ final class LocalPeers {
         didSet {
             guard shareActivity != oldValue else { return }
             pendingActions.removeAll(keepingCapacity: true)
-            lastBroadcast = 0
+            refreshState()
         }
     }
     private var lastBroadcast: TimeInterval = 0
@@ -72,8 +83,11 @@ final class LocalPeers {
         pendingActions.append((token, ProcessInfo.processInfo.systemUptime))
     }
 
-    func takeActions(for id: String) -> [Action] {
-        peers[id]?.takeActions(now: ProcessInfo.processInfo.systemUptime) ?? []
+    func refreshState() { lastBroadcast = 0 }
+
+    func takeAction(for id: String, visible: Bool) -> Action? {
+        guard visible else { peers[id]?.clearActions(); return nil }
+        return peers[id]?.takeAction(now: ProcessInfo.processInfo.systemUptime)
     }
 
     func start() -> Bool {
@@ -173,11 +187,14 @@ final class LocalPeers {
             peers = remaining
             changed = true
         }
-        if changed { onUpdate?() }
+        if changed || peers.values.contains(where: { !$0.actions.isEmpty }) { onUpdate?() }
     }
 
     private func accept(_ bytes: [UInt8], now: TimeInterval) -> Bool {
-        Self.apply(bytes: bytes, ownID: session, now: now, peers: &peers)
+        let count = peers.count
+        let accepted = Self.apply(bytes: bytes, ownID: session, now: now, peers: &peers)
+        if peers.count > count { refreshState() }
+        return accepted
     }
 
     static func normalizedNickname(_ input: String) -> String? {
@@ -223,7 +240,7 @@ final class LocalPeers {
             }
             peer.supportsActivity = true
             peer.sharingActivity = fields[3] == "1"
-            if !peer.sharingActivity { peer.actions.removeAll(keepingCapacity: true) }
+            if !peer.sharingActivity { peer.clearActions() }
             peer.seen = now
         case "WA1":
             guard fields.count == 4, peer.sharingActivity, let sequence = count(fields[2]),

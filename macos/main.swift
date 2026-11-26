@@ -169,6 +169,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         skinID = PetSkin.named(id).id
         defaults.set(skinID, forKey: "skin")
         pet.selectSkin(skinID)
+        peers.refreshState()
         refreshSettings()
     }
     @objc private func enlarge() { resize(to: min(2.0, scale + 0.1)) }
@@ -234,6 +235,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 guard let self = self, let normalized = LocalPeers.normalizedNickname(value) else { return false }
                 self.nickname = normalized
                 self.defaults.set(normalized, forKey: "nickname")
+                self.peers.refreshState()
                 self.refreshSettings()
                 return true
             }
@@ -288,7 +290,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
     private func updateFriends() {
         guard let window = window else { return }
-        friends.update(owner: window, members: peers.peers, clickThrough: clickThrough, showLabels: showLabels) { peers.takeActions(for: $0) }
+        friends.update(owner: window, members: peers.peers, clickThrough: clickThrough, showLabels: showLabels) {
+            peers.takeAction(for: $0, visible: window.isVisible)
+        }
     }
     private func returnToCorner() {
         let screen = window.screen ?? NSScreen.main ?? NSScreen.screens[0]
@@ -368,11 +372,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             let code = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
             if code == 57 {
                 incrementKeyCount()
+                pet.pressKey(code)
                 peers.recordKey(code)
             } else if [54, 55, 56, 58, 59, 60, 61, 62, 63].contains(code) {
                 if CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(code)) {
                     if heldModifiers.insert(code).inserted {
                         incrementKeyCount()
+                        if NetworkKeyCodes.scan(for: code) != nil { pet.pressKey(code) }
                         peers.recordKey(code)
                     }
                 } else { heldModifiers.remove(code) }

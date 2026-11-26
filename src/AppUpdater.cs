@@ -18,6 +18,7 @@ namespace WheekKeys
     internal sealed class AppUpdater
     {
         private const string DefaultUpdateUrl = "https://api.github.com/repos/gwtt/guinea-pig-keyboard/releases/latest";
+        private static readonly Uri LatestReleasePage = new Uri("https://github.com/gwtt/guinea-pig-keyboard/releases/latest");
         private const int ManifestLimit = 1024 * 1024, DownloadLimit = 100 * 1024 * 1024;
         private const int MinimumDownloadSize = 64 * 1024;
         private static readonly Regex SemVer = new Regex(
@@ -34,6 +35,7 @@ namespace WheekKeys
             internal Uri Download;
             internal string Sha256;
             internal string Notes;
+            internal bool OpenReleasePage;
         }
 
         internal Release Available { get; private set; }
@@ -61,8 +63,13 @@ namespace WheekKeys
                     timeout.CancelAfter(TimeSpan.FromSeconds(8));
                     Uri source = HttpsUri(UpdateUrl());
                     if (source == null) throw new InvalidDataException("更新源需要有效的 HTTPS 地址。");
-                    string json = await ReadManifestAsync(source, timeout.Token);
-                    Release latest = ParseRelease(json);
+                    string json = null;
+                    try { json = await ReadManifestAsync(source, timeout.Token); }
+                    catch (HttpRequestException)
+                    {
+                        if (source.AbsoluteUri != DefaultUpdateUrl || timeout.IsCancellationRequested) throw;
+                    }
+                    Release latest = json == null ? await ReadLatestReleasePageAsync(timeout.Token) : ParseRelease(json);
                     timeout.Token.ThrowIfCancellationRequested();
                     Available = IsNewer(latest.Version, currentVersion) ? latest : null;
                     if (Available == null) Status = null;
@@ -80,6 +87,21 @@ namespace WheekKeys
         {
             Release release = Available;
             if (release == null || Busy || lifetime.IsCancellationRequested) return false;
+            if (release.OpenReleasePage)
+            {
+                try
+                {
+                    using (Process process = Process.Start(new ProcessStartInfo(release.Download.AbsoluteUri) { UseShellExecute = true })) { }
+                    Status = null;
+                }
+                catch (Exception e)
+                {
+                    if (!ExpectedError(e)) throw;
+                    Status = "无法打开发布页，请稍后重试。";
+                }
+                Notify();
+                return false;
+            }
             Busy = true;
             Status = "正在下载更新…";
             Notify();
@@ -174,6 +196,35 @@ namespace WheekKeys
             }
         }
 
+        private static async Task<Release> ReadLatestReleasePageAsync(CancellationToken token)
+        {
+            using (var request = new HttpRequestMessage(HttpMethod.Head, LatestReleasePage))
+            using (HttpResponseMessage response = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false))
+            {
+                int status = (int)response.StatusCode;
+                Uri page;
+                if (status < 300 || status >= 400 || response.Headers.Location == null ||
+                    !Uri.TryCreate(LatestReleasePage, response.Headers.Location, out page))
+                    throw new InvalidDataException("无法读取官方发布页。");
+                return ParseReleasePage(page);
+            }
+        }
+
+        internal static Release ParseReleasePage(Uri page)
+        {
+            const string prefix = "/gwtt/guinea-pig-keyboard/releases/tag/";
+            if (!page.IsAbsoluteUri || page.Scheme != Uri.UriSchemeHttps || page.Host != LatestReleasePage.Host ||
+                !page.IsDefaultPort || page.UserInfo.Length != 0 || page.Query.Length != 0 || page.Fragment.Length != 0 ||
+                !page.AbsolutePath.StartsWith(prefix + "v", StringComparison.Ordinal))
+                throw new InvalidDataException("官方发布页地址无效。");
+            string tag = page.AbsolutePath.Substring(prefix.Length);
+            Match version = MatchVersion(tag);
+            if (!version.Success || version.Groups[4].Success)
+                throw new InvalidDataException("官方发布页版本无效。");
+            return new Release { Version = tag.Substring(1), Download = page, OpenReleasePage = true,
+                Notes = "将在浏览器打开官方发布页，请下载 Windows 版本。" };
+        }
+
         private static async Task DownloadAsync(Release release, string path, CancellationToken token)
         {
             using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 8192, true))
@@ -232,6 +283,10 @@ namespace WheekKeys
             string notes = StringValue(fields, "notes");
             if (StringValue(fields, "version") == null)
             {
+                object draft, prerelease;
+                if ((fields.TryGetValue("draft", out draft) && Equals(draft, true)) ||
+                    (fields.TryGetValue("prerelease", out prerelease) && Equals(prerelease, true)))
+                    throw new InvalidDataException("更新清单不是正式发行版。");
                 url = null;
                 notes = StringValue(fields, "body");
                 object assets;
@@ -240,8 +295,9 @@ namespace WheekKeys
                     foreach (object asset in list)
                     {
                         var entry = asset as Dictionary<string, object>;
+                        if (StringValue(entry, "name") != "WheekKeys.exe") continue;
                         Uri candidate = HttpsUri(StringValue(entry, "browser_download_url"));
-                        if (candidate == null || !candidate.AbsolutePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) continue;
+                        if (candidate == null || !candidate.AbsolutePath.EndsWith("/WheekKeys.exe", StringComparison.Ordinal)) continue;
                         url = candidate.AbsoluteUri;
                         string assetDigest = StringValue(entry, "digest");
                         if (assetDigest != null && assetDigest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))

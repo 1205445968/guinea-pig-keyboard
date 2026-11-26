@@ -51,7 +51,7 @@ final class FriendDesktop {
     private var friends: [String: Friend] = [:]
 
     func update(owner: NSWindow, members: [String: LocalPeers.Peer], clickThrough: Bool, showLabels: Bool,
-                takeActions: (String) -> [LocalPeers.Action]) {
+                takeAction: (String) -> LocalPeers.Action?) {
         let ids = members.keys.sorted()
         for id in Array(friends.keys) where members[id] == nil {
             friends.removeValue(forKey: id)?.window.close()
@@ -75,13 +75,13 @@ final class FriendDesktop {
             friend.layout(at: frame)
             let labelWidth = min(frame.width - 12, friend.name.intrinsicContentSize.width + 14)
             friend.name.frame = NSRect(x: (frame.width - labelWidth) / 2, y: 6, width: labelWidth, height: 18)
-            let actions = takeActions(id)
+            let action = takeAction(id)
             guard owner.isVisible else {
                 if friend.window.isVisible { friend.window.orderOut(nil) }
                 continue
             }
             if !friend.window.isVisible { friend.window.orderFrontRegardless() }
-            for action in actions {
+            if let action = action {
                 switch action {
                 case .key(let code): friend.pet.pressKey(code)
                 case .click(let right): friend.pet.clickMouse(right: right)

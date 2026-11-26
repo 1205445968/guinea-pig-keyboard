@@ -10,6 +10,7 @@ final class PetUpdateChecker {
     }
     private enum InvalidRelease: Error { case version }
     private let endpoint = URL(string: "https://api.github.com/repos/gwtt/guinea-pig-keyboard/releases/latest")!
+    private static let releasePage = URL(string: "https://github.com/gwtt/guinea-pig-keyboard/releases/latest")!
     private var checking = false
     private var lastSuccess: TimeInterval?
     private(set) var downloadURL: URL?
@@ -32,6 +33,16 @@ final class PetUpdateChecker {
         return url
     }
 
+    static func updateURL(releasePage page: URL, currentVersion: String) throws -> URL? {
+        let tag = page.lastPathComponent
+        guard page.scheme == "https", page.host == releasePage.host, page.user == nil, page.password == nil,
+              page.port == nil, page.query == nil, page.fragment == nil, tag.hasPrefix("v"),
+              page.path == "/gwtt/guinea-pig-keyboard/releases/tag/\(tag)",
+              let latest = version(tag), let current = version(currentVersion) else { throw InvalidRelease.version }
+        guard current.lexicographicallyPrecedes(latest) else { return nil }
+        return URL(string: "https://github.com/gwtt/guinea-pig-keyboard/releases/download/\(tag)/WheekKeys-macOS.zip")
+    }
+
     func check(completion: @escaping () -> Void) {
         if checking || lastSuccess.map({ ProcessInfo.processInfo.systemUptime - $0 < 300 }) == true { return }
         checking = true
@@ -41,21 +52,42 @@ final class PetUpdateChecker {
         let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self else { return }
+            if let status = (response as? HTTPURLResponse)?.statusCode, status == 403 || status == 429 {
+                self.checkReleasePage(current: current, completion: completion)
+                return
+            }
             let result: Result<URL?, Error>
             if error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data = data {
                 result = Result { try Self.updateURL(data: data, currentVersion: current) }
             } else {
                 result = .failure(error ?? URLError(.badServerResponse))
             }
-            DispatchQueue.main.async {
-                self.checking = false
-                if case .success(let url) = result {
-                    self.downloadURL = url
-                    self.lastSuccess = ProcessInfo.processInfo.systemUptime
-                }
-                completion()
-            }
+            self.finish(result, completion: completion)
         }.resume()
+    }
+
+    private func checkReleasePage(current: String, completion: @escaping () -> Void) {
+        var request = URLRequest(url: Self.releasePage, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+        request.httpMethod = "HEAD"
+        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
+            guard let self = self else { return }
+            guard let response = response as? HTTPURLResponse, response.statusCode == 200, let page = response.url else {
+                self.finish(.failure(error ?? URLError(.badServerResponse)), completion: completion)
+                return
+            }
+            self.finish(Result { try Self.updateURL(releasePage: page, currentVersion: current) }, completion: completion)
+        }.resume()
+    }
+
+    private func finish(_ result: Result<URL?, Error>, completion: @escaping () -> Void) {
+        DispatchQueue.main.async {
+            self.checking = false
+            if case .success(let url) = result {
+                self.downloadURL = url
+                self.lastSuccess = ProcessInfo.processInfo.systemUptime
+            }
+            completion()
+        }
     }
 }
 

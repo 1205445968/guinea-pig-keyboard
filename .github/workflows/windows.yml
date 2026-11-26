@@ -27,6 +27,11 @@ jobs:
       - name: Build
         shell: pwsh
         run: ./build.ps1
+      - name: Test friend sync and settings
+        shell: pwsh
+        run: |
+          ./tools/test-friend-network.ps1
+          ./tools/test-pixel-skins.ps1
       - name: Upload executable
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -157,6 +162,13 @@ jobs:
           - Windows 和 macOS 设置新增「QQ 群」标签，可用手机 QQ 扫码加群。
           - 启动或打开设置时自动检查更新，发现新版后可从设置中更新。
           - 默认桌宠大小调整为 58%，外观统一为像素系列。Windows 新增键鼠皮肤，移除搜狗输入法自动隐藏选项。
+          '@
+            $notes = $changes + "`n`n" + $notes
+          } elseif ($env:RELEASE_TAG -eq 'v0.1.7') {
+            $changes = @'
+          - Windows 切换键鼠皮肤只影响自己的桌宠，好友窗口保留独立的默认皮肤。
+          - Windows 和 macOS 联机时会在发现新好友后补发状态，并按顺序回放按键和左右点击，减少刚加入时的动作遗漏及动画互相打断。
+          - GitHub API 限流时可从官方发布页检查更新。Windows 在回退时通过浏览器打开发布页，macOS 提供新版安装包的下载入口。
           '@
             $notes = $changes + "`n`n" + $notes
           }
