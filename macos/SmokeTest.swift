@@ -49,6 +49,29 @@ import AppKit
     precondition(RoomTransport.normalizeCode("abcde-fghij-klmno-p47um") == nil)
     precondition(LocalPeers.unexpired(peerMap, now: 29.99, expiry: 20).count == 1)
     precondition(LocalPeers.unexpired(peerMap, now: 30, expiry: 20).isEmpty)
+    func apply(_ message: String, now: TimeInterval) -> Bool {
+        LocalPeers.apply(bytes: Array(message.utf8), ownID: ownID, now: now, peers: &namedPeers)
+    }
+    let appearance = "WS1|\(remoteID)|drawn-tricolor|1"
+    let action = "WA1|\(remoteID)|1|k30,k328,l,r"
+    precondition(RoomTransport.validPlaintext(appearance) && RoomTransport.validPlaintext(action))
+    precondition(!RoomTransport.validPlaintext("WA1|\(remoteID)|1|") &&
+                 !RoomTransport.validPlaintext(action + "\n"))
+    precondition(namedPeers[remoteID]?.supportsActivity == false && !apply(action, now: 16))
+    precondition(apply(appearance, now: 16) && apply(action, now: 16))
+    precondition(apply(valid, now: 16.1) && namedPeers[remoteID]?.skin == "drawn-tricolor")
+    precondition(!apply(action, now: 16.2) && !apply("WA1|\(remoteID)|2|k0,l", now: 16.2))
+    precondition(namedPeers[remoteID]?.takeActions(now: 16.2) == [.key(0), .key(126), .click(false), .click(true)])
+    precondition(apply("WA1|\(remoteID)|2|k57", now: 17))
+    precondition(namedPeers[remoteID]?.takeActions(now: 17.9) == [])
+    precondition(apply("WA1|\(remoteID)|3|r", now: 18))
+    precondition(apply("WS1|\(remoteID)|drawn-tricolor|0", now: 18))
+    precondition(namedPeers[remoteID]?.supportsActivity == true && namedPeers[remoteID]?.sharingActivity == false)
+    precondition(!apply("WA1|\(remoteID)|4|l", now: 18) && namedPeers[remoteID]?.takeActions(now: 18) == [])
+    precondition(!apply("WS1|\(ownID)|drawn-tricolor|1", now: 18) && namedPeers.count == 1)
+    precondition(NetworkKeyCodes.scan(for: 0) == 30 && NetworkKeyCodes.scan(for: 49) == 57 &&
+                 NetworkKeyCodes.scan(for: 62) == 285 && NetworkKeyCodes.scan(for: 76) == 284)
+    print("Verified cross-platform activity packets, key codes, pause and expiry")
     _ = NSApplication.shared
     let settings = PetSettingsViewController()
     let settingsView = settings.view
@@ -102,7 +125,41 @@ import AppKit
     let nextTexts = visibleText()
     precondition(nextTexts.contains { $0.stringValue == "房间已连接 · 伙伴 0" })
     precondition(!nextTexts.contains { $0.stringValue == "像素长毛黄白 · bbbb" })
-    print("Verified settings tab, room state and peer refresh")
+    guard let share = descendants(settingsView).compactMap({ $0 as? NSButton }).first(where: { $0.title == "同步按键和鼠标动作" }) else {
+        fatalError("Activity sharing switch missing")
+    }
+    var shared = true
+    settings.onShareActivityChange = { shared = $0 }
+    share.state = .off
+    share.sendAction(share.action, to: share.target)
+    precondition(!shared, "Activity sharing switch did not notify owner")
+    let workArea = NSRect(x: 0, y: 0, width: 1280, height: 720)
+    let corner = NSRect(x: 10, y: 10, width: 310, height: 238.7)
+    let friendFrames = FriendDesktop.frames(around: corner, within: workArea, count: 4)
+    precondition(friendFrames.count == 4 && friendFrames.allSatisfy { workArea.contains($0) && !$0.intersects(corner) })
+    for index in friendFrames.indices {
+        precondition(!friendFrames[..<index].contains { $0.intersects(friendFrames[index]) })
+    }
+    let owner = NSPanel(contentRect: NSRect(x: 200, y: 200, width: 310, height: 238.7), styleMask: [.borderless], backing: .buffered, defer: false)
+    owner.orderFrontRegardless()
+    let desktop = FriendDesktop()
+    var delivered = false
+    desktop.update(owner: owner, members: [remoteID: firstPeer], clickThrough: true, showLabels: true) { id in
+        delivered = id == remoteID
+        return [.key(0), .click(false), .click(true)]
+    }
+    guard let friend = desktop.window(for: remoteID) else { fatalError("Friend window missing") }
+    precondition(desktop.count == 1 && friend.isVisible && friend.ignoresMouseEvents && delivered)
+    desktop.update(owner: owner, members: [remoteID: firstPeer], clickThrough: false, showLabels: false) { _ in [] }
+    precondition(desktop.window(for: remoteID) === friend && !friend.ignoresMouseEvents, "Refresh replaced friend")
+    owner.orderOut(nil)
+    desktop.update(owner: owner, members: [remoteID: firstPeer], clickThrough: false, showLabels: true) { _ in [] }
+    precondition(!friend.isVisible, "Friend remained visible after owner hid")
+    desktop.update(owner: owner, members: [:], clickThrough: false, showLabels: true) { _ in [] }
+    precondition(desktop.count == 0, "Leaving did not remove friend")
+    desktop.close()
+    owner.close()
+    print("Verified settings, room state and desktop friend windows")
     let size = NSRect(x: 0, y: 0, width: 400, height: 308)
     let window = NSWindow(contentRect: size, styleMask: [.borderless], backing: .buffered, defer: false)
     let view = PetView(frame: size)

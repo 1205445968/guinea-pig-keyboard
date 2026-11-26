@@ -267,11 +267,14 @@ final class RoomTransport {
         }
     }
 
-    private static func validPlaintext(_ value: String) -> Bool {
+    static func validPlaintext(_ value: String) -> Bool {
         let bytes = Array(value.utf8)
         guard bytes.count <= 128, bytes.allSatisfy({ $0 >= 32 && $0 <= 126 }) else { return false }
         let parts = value.split(separator: "|", omittingEmptySubsequences: false)
         if parts.count == 5 && parts[0] == "WK1" {
+            return parts.dropFirst().allSatisfy { !$0.isEmpty }
+        }
+        if parts.count == 4 && (parts[0] == "WS1" || parts[0] == "WA1") {
             return parts.dropFirst().allSatisfy { !$0.isEmpty }
         }
         guard bytes.count <= 125, parts.count == 3, parts[0] == "WN1",

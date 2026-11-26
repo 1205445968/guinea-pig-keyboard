@@ -2,13 +2,40 @@ import Foundation
 import Darwin
 
 final class LocalPeers {
-    struct Peer {
-        let skin: String
-        let keys: UInt64
-        let clicks: UInt64
-        let seen: TimeInterval
-        var nickname: String = ""
+    enum Action: Equatable {
+        case key(UInt16)
+        case click(Bool)
     }
+
+    struct Peer {
+        var skin: String
+        var keys: UInt64
+        var clicks: UInt64
+        var seen: TimeInterval
+        var nickname: String = ""
+        var supportsActivity = false
+        var sharingActivity = false
+        fileprivate var hasAppearance = false
+        fileprivate var actionSequence: UInt64 = 0
+        fileprivate var actions: [(action: Action, time: TimeInterval)] = []
+
+        init(skin: String, keys: UInt64, clicks: UInt64, seen: TimeInterval) {
+            self.skin = skin
+            self.keys = keys
+            self.clicks = clicks
+            self.seen = seen
+        }
+
+        mutating func takeActions(now: TimeInterval) -> [Action] {
+            defer { actions.removeAll(keepingCapacity: true) }
+            guard sharingActivity else { return [] }
+            return actions.filter { now - $0.time <= LocalPeers.actionLifetime }.map { $0.action }
+        }
+    }
+
+    private static let actionLifetime: TimeInterval = 0.8
+    private static let actionBatchLimit = 12
+    private static let actionQueueLimit = 64
     private(set) var peers: [String: Peer] = [:]
     private(set) var active = false
     private(set) var status = ""
@@ -20,7 +47,34 @@ final class LocalPeers {
     private let session = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     var payload: (() -> (String, UInt64, UInt64))?
     var nickname: (() -> String)?
+    var onUpdate: (() -> Void)?
+    var shareActivity = true {
+        didSet {
+            guard shareActivity != oldValue else { return }
+            pendingActions.removeAll(keepingCapacity: true)
+            lastBroadcast = 0
+        }
+    }
     private var lastBroadcast: TimeInterval = 0
+    private var actionSequence: UInt64 = 0
+    private var pendingActions: [(token: String, time: TimeInterval)] = []
+
+    func recordKey(_ code: UInt16) {
+        guard let scan = NetworkKeyCodes.scan(for: code) else { return }
+        recordAction("k\(scan)")
+    }
+
+    func recordClick(right: Bool) { recordAction(right ? "r" : "l") }
+
+    private func recordAction(_ token: String) {
+        guard active, shareActivity, room == nil || roomConnected else { return }
+        if pendingActions.count == Self.actionQueueLimit { pendingActions.removeFirst() }
+        pendingActions.append((token, ProcessInfo.processInfo.systemUptime))
+    }
+
+    func takeActions(for id: String) -> [Action] {
+        peers[id]?.takeActions(now: ProcessInfo.processInfo.systemUptime) ?? []
+    }
 
     func start() -> Bool {
         guard !active else { return true }
@@ -57,7 +111,7 @@ final class LocalPeers {
     }
 
     private func startTimer() {
-        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in self?.tick() }
+        let timer = Timer(timeInterval: 0.03, repeats: true) { [weak self] _ in self?.tick() }
         self.timer = timer
         RunLoop.main.add(timer, forMode: .common)
         tick()
@@ -72,46 +126,57 @@ final class LocalPeers {
         if socketFD >= 0 { close(socketFD) }
         socketFD = -1
         active = false
-        peers.removeAll()
         status = ""
+        clearPeers()
+    }
+
+    private func clearPeers() {
+        pendingActions.removeAll(keepingCapacity: true)
+        lastBroadcast = 0
+        guard !peers.isEmpty else { return }
+        peers.removeAll()
+        onUpdate?()
     }
 
     private func tick() {
         let now = ProcessInfo.processInfo.systemUptime
         if let room = room {
             status = room.status
-            guard room.connected else {
-                peers.removeAll()
-                lastBroadcast = 0
-                return
-            }
-            if lastBroadcast == 0 || now - lastBroadcast >= 5 {
-                lastBroadcast = now
-                if let message = packet() {
-                    room.publish(message)
-                    room.publish(nicknamePacket())
-                }
-            }
-            for message in room.drain() {
-                accept(Array(message.utf8), now: now)
-            }
-            peers = Self.unexpired(peers, now: now, expiry: 20)
-            return
+            guard room.connected else { clearPeers(); return }
         }
-        if now - lastBroadcast >= 2 {
+
+        var outgoing: [String] = []
+        if lastBroadcast == 0 || now - lastBroadcast >= (room == nil ? 2 : 5) {
             lastBroadcast = now
-            broadcast()
+            outgoing = statePackets()
         }
-        var bytes = [UInt8](repeating: 0, count: 129)
-        for _ in 0..<32 {
-            let count = recv(socketFD, &bytes, bytes.count, 0)
-            if count <= 0 { break }
-            if count <= 128 { accept(Array(bytes.prefix(count)), now: now) }
+        if let packet = actionPacket(now: now) { outgoing.append(packet) }
+
+        var changed = false
+        if let room = room {
+            for message in outgoing { room.publish(message) }
+            for message in room.drain() {
+                if accept(Array(message.utf8), now: now) { changed = true }
+            }
+        } else {
+            if !outgoing.isEmpty { broadcast(outgoing) }
+            var bytes = [UInt8](repeating: 0, count: 129)
+            for _ in 0..<32 {
+                let count = recv(socketFD, &bytes, bytes.count, 0)
+                if count <= 0 { break }
+                if count <= 128, accept(Array(bytes.prefix(count)), now: now) { changed = true }
+            }
         }
-        peers = Self.unexpired(peers, now: now)
+
+        let remaining = Self.unexpired(peers, now: now, expiry: room == nil ? 8 : 20)
+        if remaining.count != peers.count {
+            peers = remaining
+            changed = true
+        }
+        if changed { onUpdate?() }
     }
 
-    private func accept(_ bytes: [UInt8], now: TimeInterval) {
+    private func accept(_ bytes: [UInt8], now: TimeInterval) -> Bool {
         Self.apply(bytes: bytes, ownID: session, now: now, peers: &peers)
     }
 
@@ -127,26 +192,53 @@ final class LocalPeers {
         return value
     }
 
-    static func apply(bytes: [UInt8], ownID: String, now: TimeInterval, peers: inout [String: Peer]) {
-        if let parsed = parse(bytes: bytes, ownID: ownID, now: now) {
-            let (id, received) = parsed
-            guard peers[id] != nil || peers.count < 64 else { return }
-            var peer = received
-            peer.nickname = peers[id]?.nickname ?? ""
-            peers[id] = peer
-            return
-        }
-        guard bytes.count <= 128, let message = String(bytes: bytes, encoding: .ascii) else { return }
+    @discardableResult
+    static func apply(bytes: [UInt8], ownID: String, now: TimeInterval, peers: inout [String: Peer]) -> Bool {
+        guard bytes.count <= 128, let message = String(bytes: bytes, encoding: .ascii) else { return false }
         let fields = message.split(separator: "|", omittingEmptySubsequences: false)
-        guard fields.count == 3, fields[0] == "WN1", fields[1].count == 32,
-              fields[1].utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
-              fields[1] != ownID, let data = Data(base64Encoded: String(fields[2])),
-              data.base64EncodedString() == fields[2], let text = String(data: data, encoding: .utf8),
-              let value = normalizedNickname(text), value == text else { return }
+        guard fields.count >= 2, fields[1] != ownID, validID(fields[1]) else { return false }
         let id = String(fields[1])
-        guard var peer = peers[id] else { return }
-        peer.nickname = value
+        if fields[0] == "WK1" {
+            guard let state = parseState(fields, now: now), peers[id] != nil || peers.count < 64 else { return false }
+            var peer = peers[id] ?? state
+            if !peer.hasAppearance { peer.skin = state.skin }
+            peer.keys = state.keys
+            peer.clicks = state.clicks
+            peer.seen = now
+            peers[id] = peer
+            return true
+        }
+        guard var peer = peers[id] else { return false }
+        switch fields[0] {
+        case "WN1":
+            guard fields.count == 3, let data = Data(base64Encoded: String(fields[2])),
+                  data.base64EncodedString() == fields[2], let text = String(data: data, encoding: .utf8),
+                  let value = normalizedNickname(text), value == text else { return false }
+            peer.nickname = value
+        case "WS1":
+            guard fields.count == 4, fields[3] == "0" || fields[3] == "1" else { return false }
+            if let skin = PetSkin.find(String(fields[2])) {
+                peer.skin = skin.id
+                peer.hasAppearance = true
+            }
+            peer.supportsActivity = true
+            peer.sharingActivity = fields[3] == "1"
+            if !peer.sharingActivity { peer.actions.removeAll(keepingCapacity: true) }
+            peer.seen = now
+        case "WA1":
+            guard fields.count == 4, peer.sharingActivity, let sequence = count(fields[2]),
+                  sequence > peer.actionSequence, let actions = parseActions(fields[3]) else { return false }
+            peer.actionSequence = sequence
+            peer.seen = now
+            peer.actions.append(contentsOf: actions.map { ($0, now) })
+            if peer.actions.count > actionQueueLimit {
+                peer.actions.removeFirst(peer.actions.count - actionQueueLimit)
+            }
+        default:
+            return false
+        }
         peers[id] = peer
+        return true
     }
 
     private func nicknamePacket() -> String {
@@ -154,33 +246,69 @@ final class LocalPeers {
         return "WN1|\(session)|\(Data(value.utf8).base64EncodedString())"
     }
 
-    private func packet() -> String? {
-        guard let values = payload?() else { return nil }
-        let (skin, keys, clicks) = values
-        return "WK1|\(session)|\(PetSkin.named(skin).networkID)|\(keys)|\(clicks)"
+    private func statePackets() -> [String] {
+        guard let (skinID, keys, clicks) = payload?() else { return [] }
+        let skin = PetSkin.named(skinID)
+        return ["WK1|\(session)|\(skin.networkID)|\(keys)|\(clicks)",
+                "WS1|\(session)|\(skin.id)|\(shareActivity ? "1" : "0")", nicknamePacket()]
+    }
+
+    private func actionPacket(now: TimeInterval) -> String? {
+        guard !pendingActions.isEmpty, actionSequence < UInt64(Int64.max) else { return nil }
+        pendingActions.removeAll { now - $0.time > Self.actionLifetime }
+        let batch = pendingActions.prefix(Self.actionBatchLimit)
+        guard !batch.isEmpty else { return nil }
+        let tokens = batch.map { $0.token }.joined(separator: ",")
+        pendingActions.removeFirst(batch.count)
+        actionSequence += 1
+        return "WA1|\(session)|\(actionSequence)|\(tokens)"
     }
 
     static func parse(bytes: [UInt8], ownID: String, now: TimeInterval) -> (String, Peer)? {
         guard bytes.count <= 128, let message = String(bytes: bytes, encoding: .ascii) else { return nil }
         let fields = message.split(separator: "|", omittingEmptySubsequences: false)
-        guard fields.count == 5, fields[0] == "WK1", fields[1].count == 32,
-              fields[1].utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
-              fields[1] != ownID, let skin = PetSkin.find(String(fields[2])),
-              !fields[3].isEmpty, !fields[4].isEmpty,
-              fields[3].utf8.allSatisfy({ (48...57).contains($0) }),
-              fields[4].utf8.allSatisfy({ (48...57).contains($0) }),
-              let keys = UInt64(fields[3]), keys <= UInt64(Int64.max),
-              let clicks = UInt64(fields[4]), clicks <= UInt64(Int64.max) else { return nil }
-        return (String(fields[1]), Peer(skin: skin.id, keys: keys, clicks: clicks, seen: now))
+        guard fields.count == 5, fields[1] != ownID, validID(fields[1]),
+              let peer = parseState(fields, now: now) else { return nil }
+        return (String(fields[1]), peer)
+    }
+
+    private static func parseState(_ fields: [Substring], now: TimeInterval) -> Peer? {
+        guard fields.count == 5, fields[0] == "WK1", let skin = PetSkin.find(String(fields[2])),
+              let keys = count(fields[3]), let clicks = count(fields[4]) else { return nil }
+        return Peer(skin: skin.id, keys: keys, clicks: clicks, seen: now)
+    }
+
+    private static func validID(_ value: Substring) -> Bool {
+        value.utf8.count == 32 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
+
+    private static func count(_ value: Substring) -> UInt64? {
+        guard !value.isEmpty, value.utf8.allSatisfy({ (48...57).contains($0) }),
+              let number = UInt64(value), number <= UInt64(Int64.max) else { return nil }
+        return number
+    }
+
+    private static func parseActions(_ value: Substring) -> [Action]? {
+        let tokens = value.split(separator: ",", omittingEmptySubsequences: false)
+        guard !tokens.isEmpty, tokens.count <= actionBatchLimit else { return nil }
+        var actions: [Action] = []
+        for token in tokens {
+            if token == "l" || token == "r" {
+                actions.append(.click(token == "r"))
+            } else {
+                guard token.first == "k", let scan = count(token.dropFirst()), (1...511).contains(scan) else { return nil }
+                actions.append(.key(NetworkKeyCodes.keyCode(for: UInt16(scan)) ?? UInt16.max))
+            }
+        }
+        return actions
     }
 
     static func unexpired(_ peers: [String: Peer], now: TimeInterval, expiry: TimeInterval = 8) -> [String: Peer] {
         peers.filter { now - $0.value.seen < expiry }
     }
 
-    private func broadcast() {
-        guard let data = packet()?.data(using: .ascii), let nameData = nicknamePacket().data(using: .ascii) else { return }
-        let messages = [data, nameData]
+    private func broadcast(_ packets: [String]) {
+        let messages = packets.map { Data($0.utf8) }
         var interfaces: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&interfaces) == 0 else { status = "无法读取网络接口"; return }
         defer { freeifaddrs(interfaces) }

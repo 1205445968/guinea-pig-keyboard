@@ -30,6 +30,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private var keyCount: UInt64 = 0
     private var clickCount: UInt64 = 0
     private let peers = LocalPeers()
+    private let friends = FriendDesktop()
     private let baseSize = NSSize(width: 310, height: 238.7)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -82,6 +83,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             return (self.skinID, self.keyCount, self.clickCount)
         }
 
+        peers.shareActivity = defaults.object(forKey: "shareActivity") as? Bool ?? true
+        peers.onUpdate = { [weak self] in self?.updateFriends() }
         peers.nickname = { [weak self] in self?.nickname ?? "" }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -105,9 +108,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         stopEventTap()
         inputTimer?.invalidate()
         peers.stop()
+        friends.close()
     }
 
-    func windowDidMove(_ notification: Notification) { savePosition() }
+    func windowDidMove(_ notification: Notification) { savePosition(); updateFriends() }
 
     private func savePosition() {
         guard let window = window else { return }
@@ -176,18 +180,21 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         let size = NSSize(width: baseSize.width * scale, height: baseSize.height * scale)
         window.setFrame(NSRect(x: oldFrame.maxX - size.width, y: oldFrame.minY, width: size.width, height: size.height), display: true)
         savePosition()
+        updateFriends()
         refreshSettings()
     }
     @objc private func toggleLabels() {
         showLabels.toggle()
         pet.showKeyLabels = showLabels
         defaults.set(showLabels, forKey: "showKeyLabels")
+        updateFriends()
         refreshSettings()
     }
     @objc private func toggleClickThrough() {
         clickThrough.toggle()
         window.ignoresMouseEvents = clickThrough
         defaults.set(clickThrough, forKey: "clickThrough")
+        updateFriends()
         refreshSettings()
     }
     @objc private func showSettingsFromMenu(_ sender: NSMenuItem) {
@@ -216,6 +223,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 self.defaults.set(value, forKey: "hideForSogou")
                 self.updateVisibility()
                 self.refreshSettings()
+            }
+            created.onShareActivityChange = { [weak self] value in
+                self?.peers.shareActivity = value
+                self?.defaults.set(value, forKey: "shareActivity")
+                self?.refreshSettings()
             }
             created.onNetworkingChange = { [weak self] value in
                 guard let self = self else { return }
@@ -266,7 +278,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         settingsController?.refresh(skinID: skinID, scale: scale, showLabels: showLabels, clickThrough: clickThrough,
                                     hideForSogou: hideForSogou, networking: peers.active,
                                     keys: keyCount, clicks: clickCount, peers: rows, networkStatus: peers.status,
-                                    roomCode: peers.roomCode, roomConnected: peers.roomConnected, nickname: nickname)
+                                    roomCode: peers.roomCode, roomConnected: peers.roomConnected, nickname: nickname, shareActivity: peers.shareActivity)
+    }
+    private func updateFriends() {
+        guard let window = window else { return }
+        friends.update(owner: window, members: peers.peers, clickThrough: clickThrough, showLabels: showLabels) { peers.takeActions(for: $0) }
     }
     private func returnToCorner() {
         let screen = window.screen ?? NSScreen.main ?? NSScreen.screens[0]
@@ -282,6 +298,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         let shouldShow = !manuallyHidden && !(hideForSogou && sogouActive)
         if shouldShow && !window.isVisible { window.orderFrontRegardless() }
         else if !shouldShow && window.isVisible { window.orderOut(nil) }
+        updateFriends()
     }
     private func updateInputSource() {
         guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return }
@@ -347,15 +364,21 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
                 incrementKeyCount()
             }
-            pet.pressKey(UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode)))
+            let code = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
+            pet.pressKey(code)
+            peers.recordKey(code)
         case .flagsChanged:
             pet.noteInput(ProcessInfo.processInfo.systemUptime)
             let code = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
             if code == 57 {
                 incrementKeyCount()
+                peers.recordKey(code)
             } else if [54, 55, 56, 58, 59, 60, 61, 62, 63].contains(code) {
                 if CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(code)) {
-                    if heldModifiers.insert(code).inserted { incrementKeyCount() }
+                    if heldModifiers.insert(code).inserted {
+                        incrementKeyCount()
+                        peers.recordKey(code)
+                    }
                 } else { heldModifiers.remove(code) }
             }
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
@@ -366,6 +389,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             clickCount = min(UInt64(Int64.max), clickCount + 1)
             countsDirty = true
             pet.clickMouse(right: type == .rightMouseDown)
+            peers.recordClick(right: type == .rightMouseDown)
         case .scrollWheel:
             let points = event.getIntegerValueField(.scrollWheelEventPointDeltaAxis1)
             pet.scrollMouse(points == 0 ? event.getIntegerValueField(.scrollWheelEventDeltaAxis1) : points)

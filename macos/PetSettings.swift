@@ -7,6 +7,7 @@ final class PetSettingsViewController: NSViewController {
     var onShowLabelsChange: ((Bool) -> Void)?
     var onClickThroughChange: ((Bool) -> Void)?
     var onHideForSogouChange: ((Bool) -> Void)?
+    var onShareActivityChange: ((Bool) -> Void)?
     var onNetworkingChange: ((Bool) -> Void)?
     var onCreateRoom: (() -> Void)?
     var onJoinRoom: ((String) -> Void)?
@@ -21,6 +22,7 @@ final class PetSettingsViewController: NSViewController {
     private let clickThroughSwitch = NSButton(checkboxWithTitle: "鼠标穿透", target: nil, action: nil)
 
     private let sogouSwitch = NSButton(checkboxWithTitle: "使用搜狗输入法时自动隐藏", target: nil, action: nil)
+    private let shareSwitch = NSButton(checkboxWithTitle: "同步按键和鼠标动作", target: nil, action: nil)
     private let networkSwitch = NSButton(checkboxWithTitle: "开启局域网联机", target: nil, action: nil)
     private let tabs = NSSegmentedControl(labels: ["桌宠", "联机"], trackingMode: .selectOne, target: nil, action: nil)
     private let petScroll = NSScrollView()
@@ -170,26 +172,30 @@ final class PetSettingsViewController: NSViewController {
         networkState.font = .systemFont(ofSize: 11, weight: .semibold)
         networkState.alignment = .left
         add(networkState, x: 18, top: 65, width: 150, height: 22, to: lanPage)
+        shareSwitch.target = self
+        shareSwitch.action = #selector(toggleShareActivity(_:))
+        shareSwitch.font = .systemFont(ofSize: 12)
+        add(shareSwitch, x: 18, top: 88, width: 280, height: 22, to: lanPage)
         networkMessage.font = .systemFont(ofSize: 11)
         networkMessage.textColor = NSColor(calibratedRed: 0.65, green: 0.30, blue: 0.22, alpha: 1)
         networkMessage.lineBreakMode = .byTruncatingTail
-        add(networkMessage, x: 18, top: 89, width: 280, height: 18, to: lanPage)
+        add(networkMessage, x: 18, top: 111, width: 280, height: 18, to: lanPage)
         let mine = sectionLabel("本机")
-        add(mine, x: 18, top: 111, width: 200, height: 18, to: lanPage)
-        add(localRow, x: 18, top: 131, width: 280, height: 56, to: lanPage)
+        add(mine, x: 18, top: 133, width: 200, height: 18, to: lanPage)
+        add(localRow, x: 18, top: 153, width: 280, height: 56, to: lanPage)
         localRow.layer?.backgroundColor = sage.cgColor
         localRow.canRename = true
         localRow.onSaveNickname = { [weak self] value in self?.onSaveNickname?(value) ?? false }
         let online = sectionLabel("联机伙伴")
-        add(online, x: 18, top: 198, width: 200, height: 18, to: lanPage)
+        add(online, x: 18, top: 220, width: 200, height: 18, to: lanPage)
         peerScroll.hasVerticalScroller = true
         peerScroll.drawsBackground = false
         peerScroll.borderType = .noBorder
         peerScroll.documentView = peerDocument
-        add(peerScroll, x: 18, top: 219, width: 280, height: 122, to: lanPage)
+        add(peerScroll, x: 18, top: 241, width: 280, height: 100, to: lanPage)
         emptyMessage.font = .systemFont(ofSize: 12)
         emptyMessage.textColor = mutedBrown
-        add(emptyMessage, x: 26, top: 224, width: 260, height: 48, to: lanPage)
+        add(emptyMessage, x: 26, top: 246, width: 260, height: 48, to: lanPage)
         let compactViews: [NSView] = [mine, localRow, online, peerScroll, emptyMessage]
         compactConstraints = lanPage.constraints.compactMap { constraint in
             guard constraint.firstAttribute == .top, let child = constraint.firstItem as? NSView,
@@ -211,7 +217,8 @@ final class PetSettingsViewController: NSViewController {
     func refresh(skinID: String, scale: Double, showLabels: Bool, clickThrough: Bool,
                  hideForSogou: Bool, networking: Bool, keys: UInt64, clicks: UInt64,
                  peers: [(String, LocalPeers.Peer)], networkStatus: String,
-                 roomCode: String?, roomConnected: Bool, nickname: String) {
+                 roomCode: String?, roomConnected: Bool, nickname: String, shareActivity: Bool = true) {
+        shareSwitch.state = shareActivity ? .on : .off
         sogouSwitch.state = hideForSogou ? .on : .off
         let inRoom = roomCode != nil
         let inLAN = networking && !inRoom
@@ -326,6 +333,7 @@ final class PetSettingsViewController: NSViewController {
     @objc private func toggleLabels(_ sender: NSButton) { onShowLabelsChange?(sender.state == .on) }
     @objc private func toggleClickThrough(_ sender: NSButton) { onClickThroughChange?(sender.state == .on) }
     func setNetworkError(_ message: String) { networkError = message }
+    @objc private func toggleShareActivity(_ sender: NSButton) { onShareActivityChange?(sender.state == .on) }
     @objc private func toggleSogou(_ sender: NSButton) { onHideForSogouChange?(sender.state == .on) }
     @objc private func createRoomAction() { networkError = ""; onCreateRoom?() }
     @objc private func joinRoomAction() { networkError = ""; onJoinRoom?(joinCode.stringValue) }
