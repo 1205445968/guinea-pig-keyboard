@@ -35,8 +35,12 @@ namespace WheekKeys
         private readonly Action<int> mouseScrolled;
         private readonly Dictionary<IntPtr, AbsolutePosition> absolutePositions = new Dictionary<IntPtr, AbsolutePosition>();
         private readonly Dictionary<IntPtr, HashSet<int>> heldKeys = new Dictionary<IntPtr, HashSet<int>>();
+        private readonly Dictionary<IntPtr, int> heldAlt = new Dictionary<IntPtr, int>();
         private readonly HwndSourceHook hook;
         private bool disposed;
+        internal event Action<bool> AltStateChanged;
+
+        internal void ClearHeldAlt() { heldAlt.Clear(); }
 
         public DesktopInput(HwndSource source, Action<int, bool> keyPressed, Action<bool> mousePressed,
             Action<double, double> mouseMoved, Action<int> mouseScrolled)
@@ -82,6 +86,7 @@ namespace WheekKeys
             {
                 heldKeys.Remove(lParam);
                 absolutePositions.Remove(lParam);
+                if (heldAlt.Remove(lParam) && heldAlt.Count == 0) NotifyAltState();
             }
             if (msg != WmInput || disposed) return IntPtr.Zero;
 
@@ -107,13 +112,31 @@ namespace WheekKeys
             if (keyboard.MakeCode == 0 && keyboard.VKey == 0) return;
             int scan = keyboard.MakeCode;
             if ((keyboard.Flags & (RiKeyE0 | RiKeyE1)) != 0) scan |= 0x100;
+            bool released = (keyboard.Flags & RiKeyBreak) != 0;
+            if (scan == 0x38 || scan == 0x138 || keyboard.VKey == 0x12 || keyboard.VKey == 0xA4 || keyboard.VKey == 0xA5)
+            {
+                bool wasHeld = heldAlt.Count != 0;
+                int side = scan == 0x138 || keyboard.VKey == 0xA5 ? 2 : 1;
+                int heldSides;
+                heldAlt.TryGetValue(device, out heldSides);
+                int next = released ? heldSides & ~side : heldSides | side;
+                if (next == 0) heldAlt.Remove(device);
+                else heldAlt[device] = next;
+                if (wasHeld != (heldAlt.Count != 0)) NotifyAltState();
+            }
             int key = keyboard.MakeCode == 0 ? 0x400 + keyboard.VKey :
                 ((keyboard.Flags & RiKeyE1) != 0 ? 0x200 + keyboard.MakeCode : scan);
             HashSet<int> held;
             if (!heldKeys.TryGetValue(device, out held))
                 heldKeys.Add(device, held = new HashSet<int>());
-            if ((keyboard.Flags & RiKeyBreak) != 0) held.Remove(key);
+            if (released) held.Remove(key);
             else keyPressed(scan, held.Add(key));
+        }
+
+        private void NotifyAltState()
+        {
+            Action<bool> handler = AltStateChanged;
+            if (handler != null) handler(heldAlt.Count != 0);
         }
 
         private void ProcessMouse(IntPtr device, RawMouse mouse)

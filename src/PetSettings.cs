@@ -13,6 +13,7 @@ using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 
 namespace WheekKeys
 {
@@ -31,8 +32,15 @@ namespace WheekKeys
 
         private readonly PetWindow owner;
         private readonly Dictionary<string, Button> skinButtons = new Dictionary<string, Button>();
+        private readonly Dictionary<string, Button> deskSkinButtons = new Dictionary<string, Button>();
+        private readonly UniformGrid skinGrid = new UniformGrid { Columns = 3, Rows = 0, Margin = new Thickness(-2, 2, -2, -2) };
+        private readonly TextBlock importStatus = Label(10.5, Muted), updateStatus = Label(10.5, Muted);
+        private readonly TextBlock updateTitle = Label(12, Ink);
+        private readonly DispatcherTimer deactivateTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        private Border updateBanner;
+        private Button checkUpdates, installUpdate;
         private readonly TextBlock sizeValue;
-        private bool closing;
+        private bool closing, showingImportDialog;
 
         public PetSettings(PetWindow owner)
         {
@@ -62,7 +70,9 @@ namespace WheekKeys
             layout.Children.Add(header);
 
             StackPanel body = new StackPanel { Margin = new Thickness(0, 4, 0, 4) };
+            body.Children.Add(BuildUpdates());
             body.Children.Add(BuildSkins());
+            body.Children.Add(BuildDeskSkins());
 
             StackPanel sizeSection = BuildSection("大小");
             Grid sizeRow = new Grid { Margin = new Thickness(0, 3, 0, 0) };
@@ -128,6 +138,7 @@ namespace WheekKeys
             };
             shell.Child = layout;
             Content = shell;
+            WheekPackLoader.EnableDrop(this, ImportSkin);
 
             PreviewKeyDown += delegate(object sender, KeyEventArgs e)
             {
@@ -139,8 +150,22 @@ namespace WheekKeys
                 }
             };
             Closing += delegate { closing = true; };
-            Deactivated += delegate { if (!closing) Close(); };
-            Closed += delegate { owner.SettingsClosed(this); };
+            Activated += delegate { deactivateTimer.Stop(); };
+            Deactivated += delegate { if (!closing && !showingImportDialog) deactivateTimer.Start(); };
+            deactivateTimer.Tick += delegate
+            {
+                if (PetWindow.IsKeyDown(0x01)) return;
+                deactivateTimer.Stop();
+                if (!IsActive && !closing && !showingImportDialog) Close();
+            };
+            owner.Updater.Changed += RefreshUpdate;
+            Closed += delegate
+            {
+                deactivateTimer.Stop();
+                owner.Updater.Changed -= RefreshUpdate;
+                owner.SettingsClosed(this);
+            };
+            RefreshUpdate();
             RefreshState();
         }
 
@@ -220,8 +245,48 @@ namespace WheekKeys
         private UIElement BuildSkins()
         {
             StackPanel section = BuildSection("毛色");
-            UniformGrid grid = new UniformGrid { Columns = 3, Rows = 0, Margin = new Thickness(-2, 2, -2, -2) };
-            foreach (PetSkin skin in PetSkin.All)
+            section.Children.Add(skinGrid);
+            Button import = ActionButton("导入外观 (.wheek)…", Paper2, PickSkin);
+            import.HorizontalAlignment = HorizontalAlignment.Left;
+            import.Margin = new Thickness(0, 5, 0, 1);
+            section.Children.Add(import);
+            importStatus.TextWrapping = TextWrapping.Wrap;
+            importStatus.Visibility = Visibility.Collapsed;
+            section.Children.Add(importStatus);
+            RefreshSkinButtons();
+            return section;
+        }
+
+        private UIElement BuildDeskSkins()
+        {
+            StackPanel section = BuildSection("键鼠皮肤");
+            UniformGrid grid = new UniformGrid { Columns = 3, Rows = 1, Margin = new Thickness(-2, 2, -2, -2) };
+            foreach (DeskSkin desk in DeskSkin.All)
+            {
+                DeskSkin current = desk;
+                StackPanel content = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left };
+                content.Children.Add(new Image { Source = current.SwatchImage(), Width = 17, Height = 13, Stretch = Stretch.Uniform });
+                content.Children.Add(new TextBlock { Text = current.Name, FontSize = 9.5, VerticalAlignment = VerticalAlignment.Center, Foreground = Ink, Margin = new Thickness(4, 0, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = current.Name });
+                Button button = MakeButton(content, Paper2, Ink, double.NaN, 29);
+                button.HorizontalContentAlignment = HorizontalAlignment.Left;
+                button.Padding = new Thickness(5, 2, 3, 2);
+                button.Margin = new Thickness(2);
+                button.Tag = current.Id;
+                AutomationProperties.SetAutomationId(button, "desk-" + current.Id);
+                AutomationProperties.SetName(button, current.Name);
+                button.Click += delegate { owner.SetDeskSkin(current); RefreshState(); };
+                deskSkinButtons[current.Id] = button;
+                grid.Children.Add(button);
+            }
+            section.Children.Add(grid);
+            return section;
+        }
+
+        private void RefreshSkinButtons()
+        {
+            skinGrid.Children.Clear();
+            skinButtons.Clear();
+            foreach (PetSkin skin in PetSkin.Available)
             {
                 PetSkin current = skin;
                 StackPanel content = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left };
@@ -236,10 +301,64 @@ namespace WheekKeys
                 AutomationProperties.SetName(button, current.Name);
                 button.Click += delegate { owner.SetSkin(current); RefreshState(); };
                 skinButtons.Add(current.Id, button);
-                grid.Children.Add(button);
+                skinGrid.Children.Add(button);
             }
-            section.Children.Add(grid);
-            return section;
+        }
+
+        internal void SkinImported(string message)
+        {
+            RefreshSkinButtons();
+            RefreshState();
+            importStatus.Text = message;
+            importStatus.Visibility = Visibility.Visible;
+            importStatus.BringIntoView();
+        }
+
+        private void ImportSkin(string path)
+        {
+            if (IsVisible) Activate();
+            owner.ImportSkin(path);
+        }
+
+        private void PickSkin()
+        {
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "导入外观", Filter = "豚鼠外观包 (*.wheek)|*.wheek", CheckFileExists = true, Multiselect = false
+            };
+            showingImportDialog = true;
+            try { if (dialog.ShowDialog(this) == true) ImportSkin(dialog.FileName); }
+            finally { showingImportDialog = false; }
+        }
+
+        private UIElement BuildUpdates()
+        {
+            updateTitle.FontWeight = FontWeights.SemiBold;
+            updateTitle.TextWrapping = TextWrapping.Wrap;
+            updateTitle.VerticalAlignment = VerticalAlignment.Center;
+            installUpdate = ActionButton("一键更新", Paper, async delegate { await owner.InstallUpdateAsync(); });
+            DockPanel.SetDock(installUpdate, Dock.Right);
+            var offer = new DockPanel { Children = { installUpdate, updateTitle } };
+            updateBanner = new Border { Background = SageSoft, CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(8, 4, 5, 4), Margin = new Thickness(0, 0, 0, 3), Child = offer };
+            checkUpdates = ActionButton("检查更新", Paper2, async delegate { await owner.Updater.CheckAsync(true); });
+            checkUpdates.Margin = new Thickness(0, 0, 7, 0);
+            DockPanel.SetDock(checkUpdates, Dock.Left);
+            updateStatus.VerticalAlignment = VerticalAlignment.Center;
+            updateStatus.TextWrapping = TextWrapping.Wrap;
+            return new StackPanel { Margin = new Thickness(0, 0, 0, 5),
+                Children = { updateBanner, new DockPanel { Children = { checkUpdates, updateStatus } } } };
+        }
+
+        private void RefreshUpdate()
+        {
+            AppUpdater updater = owner.Updater;
+            AppUpdater.Release latest = updater.Available;
+            updateBanner.Visibility = latest == null ? Visibility.Collapsed : Visibility.Visible;
+            updateTitle.Text = latest == null ? "" : "发现新版本 v" + latest.Version;
+            updateBanner.ToolTip = latest == null ? null : latest.Notes;
+            updateStatus.Text = updater.Status;
+            checkUpdates.IsEnabled = installUpdate.IsEnabled = !updater.Busy;
         }
 
         private StackPanel BuildSection(string label)
@@ -252,7 +371,7 @@ namespace WheekKeys
 
         private static UIElement BuildSwatch(PetSkin skin)
         {
-            var image = new Image { Source = PixelPetScene.Portrait(skin), Width = 14, Height = 14, Stretch = Stretch.Uniform };
+            var image = new Image { Source = Portrait(skin), Width = 14, Height = 14, Stretch = Stretch.Uniform };
             RenderOptions.SetBitmapScalingMode(image, skin.IsDrawn ? BitmapScalingMode.HighQuality : BitmapScalingMode.NearestNeighbor);
             return image;
         }
@@ -337,7 +456,7 @@ namespace WheekKeys
         private void RefreshState()
         {
             sizeValue.Text = Math.Round(owner.PetWidth / 310.0 * 100, MidpointRounding.AwayFromZero).ToString("0", CultureInfo.InvariantCulture) + "%";
-            foreach (PetSkin skin in PetSkin.All)
+            foreach (PetSkin skin in PetSkin.Available)
             {
                 Button button = skinButtons[skin.Id];
                 bool selected = owner.ActiveSkin.Id == skin.Id;
@@ -345,6 +464,16 @@ namespace WheekKeys
                 button.BorderBrush = selected ? Sage : Brushes.Transparent;
                 button.BorderThickness = new Thickness(selected ? 1.2 : 1);
                 button.ToolTip = selected ? skin.Name + "（当前）" : skin.Name;
+            }
+            foreach (DeskSkin desk in DeskSkin.All)
+            {
+                Button button;
+                if (!deskSkinButtons.TryGetValue(desk.Id, out button)) continue;
+                bool selected = owner.ActiveDeskSkin.Id == desk.Id;
+                button.Background = selected ? SageSoft : Paper2;
+                button.BorderBrush = selected ? Sage : Brushes.Transparent;
+                button.BorderThickness = new Thickness(selected ? 1.2 : 1);
+                button.ToolTip = selected ? desk.Name + "（当前）" : desk.Name;
             }
         }
 

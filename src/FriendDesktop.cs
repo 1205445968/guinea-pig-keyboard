@@ -3,9 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
-using Forms = System.Windows.Forms;
+using Drawing = System.Drawing;
 
 namespace WheekKeys
 {
@@ -28,6 +29,11 @@ namespace WheekKeys
 
         public void Update(LocalPeers network, double now, bool clickThrough, bool showLabels)
         {
+            Update(network, now, clickThrough, showLabels, false, DeskSkin.Default);
+        }
+
+        internal void Update(LocalPeers network, double now, bool clickThrough, bool showLabels, bool altBypass, DeskSkin desk = null)
+        {
             if (disposed) return;
             foreach (string id in windows.Keys.Where(x => network == null || !network.Members.ContainsKey(x)).ToArray())
             { windows[id].Close(); windows.Remove(id); }
@@ -40,11 +46,31 @@ namespace WheekKeys
                 {
                     int slot = 0;
                     while (windows.Values.Any(w => w.Slot == slot)) slot++;
-                    windows.Add(pair.Key, view = new FriendWindow(owner, viewport, slot, clickThrough));
+                    string id = pair.Key;
+                    windows.Add(id, view = new FriendWindow(owner, viewport, slot,
+                        delegate(string kind, double when) { return network.TrySendInteraction(id, kind, when); }));
                 }
-                view.Update(pair.Value, now, clickThrough, showLabels);
+                view.SetPointerMode(clickThrough, altBypass);
+                if (desk != null) view.SetDeskSkin(desk);
+                view.Update(pair.Value, now, showLabels);
                 view.SetOwnerVisible(owner.IsVisible);
             }
+        }
+
+        internal void SetDeskSkin(DeskSkin desk)
+        {
+            foreach (FriendWindow view in windows.Values) view.SetDeskSkin(desk);
+        }
+
+        internal void SetPointerMode(bool clickThrough, bool altBypass)
+        {
+            foreach (FriendWindow view in windows.Values) view.SetPointerMode(clickThrough, altBypass);
+        }
+
+        internal void ShowInteraction(string peerId, string kind)
+        {
+            FriendWindow view;
+            if (windows.TryGetValue(peerId, out view) && !view.IsClosed) view.ShowInteraction(kind);
         }
 
         private void OwnerVisibilityChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -71,15 +97,19 @@ namespace WheekKeys
             private readonly PixelPetScene scene;
             private readonly TextBlock label;
             private readonly TranslateTransform labelPosition = new TranslateTransform();
-            private bool through;
+            private readonly WindowPlacement placement;
+            private readonly PetWindowOverlay overlay;
+            private readonly Func<string, double, bool> send;
+            private bool through, altHint, nextPoke = true;
+            private double now;
             public readonly int Slot;
             public bool IsClosed { get; private set; }
 
-            public FriendWindow(Window owner, FrameworkElement viewport, int slot, bool clickThrough)
+            public FriendWindow(Window owner, FrameworkElement viewport, int slot, Func<string, double, bool> send)
             {
                 this.viewport = viewport;
+                this.send = send;
                 Slot = slot;
-                through = clickThrough;
                 scene = new PixelPetScene(false);
                 scene.ShowKeyLabels = true;
                 box = new Viewbox { Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Bottom, Child = scene };
@@ -88,37 +118,57 @@ namespace WheekKeys
                     VerticalAlignment = VerticalAlignment.Top, TextTrimming = TextTrimming.CharacterEllipsis,
                     TextAlignment = TextAlignment.Center, RenderTransform = labelPosition };
                 Grid panel = new Grid { Children = { box, label } };
+                overlay = new PetWindowOverlay(panel, scene, 30);
                 window = new Window { Owner = owner, Width = Math.Max(180, owner.Width), Height = Math.Max(150, owner.Width * 308.0 / 400.0 + LabelHeadroom),
                     WindowStyle = WindowStyle.None, AllowsTransparency = true, Background = Brushes.Transparent, Topmost = true,
                     ShowInTaskbar = false, ShowActivated = false, ResizeMode = ResizeMode.NoResize, Content = panel };
+                placement = new WindowPlacement(window, null, Interact);
                 scene.HeadPositionChanged += PositionLabel;
                 label.SizeChanged += delegate { PositionLabel(); };
                 MatchSize();
                 window.SourceInitialized += delegate { ApplyStyles(); };
                 window.Closed += delegate { IsClosed = true; };
-                window.MouseLeftButtonDown += delegate(object s, System.Windows.Input.MouseButtonEventArgs e)
+                window.MouseRightButtonUp += delegate(object sender, MouseButtonEventArgs e)
                 {
-                    if (e.ButtonState != System.Windows.Input.MouseButtonState.Pressed) return;
-                    try { window.DragMove(); } catch (InvalidOperationException) { }
-                    Clamp(WorkArea(window));
+                    PetWindow pet = owner as PetWindow;
+                    if (pet == null) return;
+                    Point point = window.PointToScreen(e.GetPosition(window));
+                    pet.OpenSettings(new Drawing.Point((int)point.X, (int)point.Y));
                     e.Handled = true;
                 };
                 PlaceNear(owner, slot);
             }
 
-            private static Rect WorkArea(Window reference)
+            private bool Interact()
             {
-                HwndSource source = PresentationSource.FromVisual(reference) as HwndSource;
-                Matrix toPixels = source == null ? Matrix.Identity : source.CompositionTarget.TransformToDevice;
-                Matrix fromPixels = source == null ? Matrix.Identity : source.CompositionTarget.TransformFromDevice;
-                Point center = toPixels.Transform(new Point(reference.Left + reference.Width / 2, reference.Top + reference.Height / 2));
-                var area = Forms.Screen.FromPoint(new System.Drawing.Point((int)center.X, (int)center.Y)).WorkingArea;
-                return new Rect(fromPixels.Transform(new Point(area.Left, area.Top)), fromPixels.Transform(new Point(area.Right, area.Bottom)));
+                string kind = scene.IsDozing || nextPoke ? "poke" : "feed";
+                if (send(kind, now))
+                {
+                    nextPoke = kind != "poke";
+                    ShowInteraction(kind);
+                }
+                else
+                {
+                    scene.MoveMouse(0.05, 0);
+                    overlay.Show("互动暂未发送");
+                }
+                return true;
+            }
+
+            internal void ShowInteraction(string kind)
+            {
+                scene.TriggerHop();
+                overlay.Show(kind == "feed" ? "送出一片草叶 ☘" : "轻轻戳了一下 ♡");
+            }
+
+            internal void SetDeskSkin(DeskSkin desk)
+            {
+                scene.Desk = desk;
             }
 
             private void PlaceNear(Window owner, int slot)
             {
-                Rect area = WorkArea(owner);
+                Rect area = WindowPlacement.WorkArea(owner);
                 double step = window.Width + 12;
                 double left = owner.Left - step * (slot + 1), top = owner.Top - LabelHeadroom;
                 if (left < area.Left) left = owner.Left + step * (slot + 1);
@@ -128,14 +178,10 @@ namespace WheekKeys
                     left = area.Left + (slot % columns) * step;
                     top = owner.Top - (slot / columns + 1) * (window.Height + 10);
                 }
-                window.Left = left; window.Top = top;
-                Clamp(area);
-            }
-
-            private void Clamp(Rect area)
-            {
-                window.Left = Math.Max(area.Left, Math.Min(window.Left, Math.Max(area.Left, area.Right - window.Width)));
-                window.Top = Math.Max(area.Top, Math.Min(window.Top, Math.Max(area.Top, area.Bottom - window.Height)));
+                bool ignored;
+                Point position = WindowPlacement.Calculate(new Rect(left, top, window.Width, window.Height), area, area, false, false, out ignored);
+                window.Left = position.X;
+                window.Top = position.Y;
             }
 
             private void ApplyStyles()
@@ -146,11 +192,24 @@ namespace WheekKeys
                 SetWindowLong(source.Handle, ExStyle, through ? style | Transparent : style & ~Transparent);
             }
 
-            public void Update(LocalPeers.Peer peer, double now, bool clickThrough, bool showLabels)
+            internal void SetPointerMode(bool clickThrough, bool altBypass)
             {
+                bool nextThrough = clickThrough && !altBypass;
+                bool nextHint = clickThrough && altBypass;
+                if (through == nextThrough && altHint == nextHint) return;
+                through = nextThrough;
+                altHint = nextHint;
+                if (through) placement.StopDrag();
+                overlay.SetAltHint(altHint);
+                ApplyStyles();
+            }
+
+            public void Update(LocalPeers.Peer peer, double now, bool showLabels)
+            {
+                this.now = now;
                 scene.Skin = peer.Skin;
                 if (scene.ShowKeyLabels != showLabels) scene.ShowKeyLabels = showLabels;
-                if (MatchSize()) Clamp(WorkArea(window));
+                MatchSize();
                 int count = 0; LocalPeers.PeerAction action;
                 while (count++ < 2 && peer.TryTakeAction(now, out action))
                     if (window.Owner.IsVisible)
@@ -164,18 +223,16 @@ namespace WheekKeys
                 else if (!peer.SharingActivity) label.Text += " · 已暂停动作";
                 label.ToolTip = name + " · " + peer.Skin.Name;
                 window.Title = "联机伙伴 · " + name;
-                if (through != clickThrough) { through = clickThrough; ApplyStyles(); }
             }
-            private bool MatchSize()
+            private void MatchSize()
             {
                 double width = viewport != null && viewport.ActualWidth > 0 ? viewport.ActualWidth : window.Owner.Width;
                 double height = viewport != null && viewport.ActualHeight > 0 ? viewport.ActualHeight : width * 308.0 / 400.0;
-                if (box.Width == width && box.Height == height) return false;
-                box.Width = window.Width = width;
+                if (box.Width == width && box.Height == height) return;
+                box.Width = width;
                 box.Height = height;
-                window.Height = height + LabelHeadroom;
+                placement.Resize(width, height + LabelHeadroom);
                 PositionLabel();
-                return true;
             }
 
             private void PositionLabel()
@@ -189,8 +246,13 @@ namespace WheekKeys
                 labelPosition.Y = Math.Max(0, sceneTop + head.Y * scale - label.ActualHeight - 4);
             }
 
-            public void SetOwnerVisible(bool visible) { if (visible && !window.IsVisible) window.Show(); else if (!visible && window.IsVisible) window.Hide(); }
+            public void SetOwnerVisible(bool visible) { if (IsClosed) return; if (visible && !window.IsVisible) window.Show(); else if (!visible && window.IsVisible) window.Hide(); }
             public void Close() { if (!IsClosed) window.Close(); }
         }
+    }
+
+    internal sealed partial class PixelPetScene
+    {
+        internal bool IsDozing { get { return sleep.Progress(clock.Elapsed.TotalMilliseconds) > 0; } }
     }
 }

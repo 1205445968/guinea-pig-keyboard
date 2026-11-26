@@ -29,25 +29,10 @@ namespace WheekKeys
             }
         }
 
-        private static readonly Brush PressGlow = BrushFrom(255, 185, 74, 80);
-        private static readonly Brush PressEdge = BrushFrom(125, 75, 32, 120);
-        private static readonly Pen PressLine = NewPen(PressEdge, 0.9);
         private static readonly Key[] Keys = CreateKeys();
         private static readonly Dictionary<int, Key> Lookup = IndexKeys();
-        private static readonly DrawingGroup Artwork = CreateArtwork();
+        private static readonly Dictionary<string, DrawingGroup> Artworks = new Dictionary<string, DrawingGroup>();
 
-        private static Brush BrushFrom(byte r, byte g, byte b, byte a)
-        {
-            SolidColorBrush brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
-            brush.Freeze();
-            return brush;
-        }
-        private static Pen NewPen(Brush brush, double width)
-        {
-            Pen pen = new Pen(brush, width);
-            pen.Freeze();
-            return pen;
-        }
         private static Key[] CreateKeys()
         {
             List<Key> keys = new List<Key>();
@@ -87,6 +72,7 @@ namespace WheekKeys
             if (keys.Count == 0) throw new InvalidDataException("keyboard-layout.txt 中没有键位数据。");
             return keys.ToArray();
         }
+
         private static Dictionary<int, Key> IndexKeys()
         {
             Dictionary<int, Key> keys = new Dictionary<int, Key>();
@@ -94,48 +80,66 @@ namespace WheekKeys
             keys.Add(0x11c, keys[28]);
             return keys;
         }
-        private static DrawingGroup CreateArtwork()
+
+        private static DrawingGroup GetArtwork(DeskSkin desk)
         {
-            DrawingGroup group = new DrawingGroup();
-            using (DrawingContext dc = group.Open())
+            desk = desk ?? DeskSkin.Default;
+            DrawingGroup group;
+            if (!Artworks.TryGetValue(desk.Id, out group))
             {
-                ImageSource bitmap = PixelPetScene.LoadSprite("keyboard.png");
-                dc.DrawImage(bitmap, KeyboardBounds);
+                group = new DrawingGroup();
+                using (DrawingContext dc = group.Open())
+                {
+                    ImageSource bitmap = PixelPetScene.LoadSprite(desk.DrawnKeyboardResource);
+                    dc.DrawImage(bitmap, KeyboardBounds);
+                }
+                group.Freeze();
+                Artworks[desk.Id] = group;
             }
-            group.Freeze();
             return group;
         }
-        private static void DrawPressed(DrawingContext dc, Key key, double amount)
+
+        private static void DrawPressed(DrawingContext dc, DeskSkin desk, Key key, double amount)
         {
             double width = Math.Max(0, key.Width - 1.5);
             double height = 7.3;
             Rect face = new Rect(key.Center.X - width / 2, key.Center.Y - height / 2 + amount * 1.2, width, height);
             dc.PushTransform(new RotateTransform(-3, key.Center.X, key.Center.Y));
             dc.PushOpacity(amount);
-            dc.DrawRoundedRectangle(PressGlow, PressLine, face, 2.5, 2.5);
+            dc.DrawRoundedRectangle(desk.PressGlow, desk.PressLine, face, 2.5, 2.5);
             dc.Pop();
             dc.Pop();
         }
+
         private static Key FindKey(int scan, bool right)
         {
             Key key;
             return scan != 0 && Lookup.TryGetValue(scan, out key) ? key : Lookup[right ? 36 : 33];
         }
+
         private static double Clamp(double amount)
         {
             return double.IsNaN(amount) ? 0 : Math.Max(0, Math.Min(1, amount));
         }
+
         public static void Draw(DrawingContext dc, int leftScan, double leftAmount, int rightScan, double rightAmount)
         {
+            Draw(dc, DeskSkin.Default, leftScan, leftAmount, rightScan, rightAmount);
+        }
+
+        public static void Draw(DrawingContext dc, DeskSkin desk, int leftScan, double leftAmount, int rightScan, double rightAmount)
+        {
             if (dc == null) throw new ArgumentNullException("dc");
-            dc.DrawDrawing(Artwork);
+            desk = desk ?? DeskSkin.Default;
+            dc.DrawDrawing(GetArtwork(desk));
             double left = Clamp(leftAmount);
             double right = Clamp(rightAmount);
             Key leftKey = FindKey(leftScan, false);
             Key rightKey = FindKey(rightScan, true);
-            if (left > 0) DrawPressed(dc, leftKey, leftKey == rightKey ? Math.Max(left, right) : left);
-            if (right > 0 && (rightKey != leftKey || left <= 0)) DrawPressed(dc, rightKey, right);
+            if (left > 0) DrawPressed(dc, desk, leftKey, leftKey == rightKey ? Math.Max(left, right) : left);
+            if (right > 0 && (rightKey != leftKey || left <= 0)) DrawPressed(dc, desk, rightKey, right);
         }
+
         public static bool IsRight(int scan)
         {
             Key key;
@@ -154,6 +158,7 @@ namespace WheekKeys
                 default: return false;
             }
         }
+
         public static string Label(int scan)
         {
             Key key;
@@ -177,6 +182,7 @@ namespace WheekKeys
             }
             return "";
         }
+
         public static Point Target(int scan, bool right)
         {
             return FindKey(scan, right).Center;

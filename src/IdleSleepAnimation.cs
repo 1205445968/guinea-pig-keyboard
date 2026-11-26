@@ -36,6 +36,11 @@ namespace WheekKeys
             return Math.Max(0, Math.Min(1, (now - lastActivity - IdleDelayMilliseconds) / CloseMilliseconds));
         }
 
+        internal double IdleMilliseconds(double now)
+        {
+            return Math.Max(0, now - lastActivity);
+        }
+
         public int EyeStage(double now)
         {
             double progress = Progress(now);

@@ -22,19 +22,26 @@ namespace WheekKeys
         private readonly BitmapSource[] _eyes;
         private readonly BitmapSource[] _sleepEyes;
         private static readonly BitmapSource OpenMouth = PixelPetScene.Sprite("mouth-smile.png");
+        private static readonly BitmapSource PeepMouth = PixelPetScene.Sprite("mouth-peep.png");
+        private static readonly BitmapSource YawnMouth = PixelPetScene.Sprite("mouth-yawn.png");
         private readonly int _sourceWidth;
         private readonly int _sourceHeight;
         private readonly byte[] _bodyPixels;
         private readonly MouthArt _mouth;
+        private readonly byte[][] _dozeMouthPixels;
         private readonly double[] _faceWeights;
         private readonly BitmapSource[] _headFrames = new BitmapSource[4];
+        private readonly BitmapSource[] _dozeHeadFrames = new BitmapSource[3];
         private Vector _headDirection;
+        private Vector _dozeDirection;
 
         public BitmapSource Body { get; private set; }
 
-        public EyeArt(BitmapSource source) : this(source, true, Color.FromRgb(98, 71, 55)) { }
+        public EyeArt(BitmapSource source) : this(source, true, Color.FromRgb(98, 71, 55), null) { }
 
-        public EyeArt(BitmapSource source, bool clearEyes, Color eyeColor)
+        public EyeArt(BitmapSource source, bool clearEyes, Color eyeColor) : this(source, clearEyes, eyeColor, null) { }
+
+        public EyeArt(BitmapSource source, bool clearEyes, Color eyeColor, BitmapSource customMouth)
         {
             if (source == null) throw new ArgumentNullException("source");
             _sourceWidth = source.PixelWidth;
@@ -50,7 +57,7 @@ namespace WheekKeys
                 CreateEye(new[] { "......", "......", "#....#", "##..##", ".####.", "......" }, eyeColor)
             };
             _sleepEyes = IdleSleepAnimation.BlendEyes(_eyes[0], _eyes[1]);
-            if (clearEyes)
+            if (clearEyes && _sourceWidth >= RightX + EyeSize && _sourceHeight >= EyeY + EyeSize)
             {
                 ClearEye(body, stride, LeftX, EyeY);
                 ClearEye(body, stride, RightX, EyeY);
@@ -60,8 +67,39 @@ namespace WheekKeys
             Body.Freeze();
             _bodyPixels = new byte[body.Length];
             new FormatConvertedBitmap(Body, PixelFormats.Pbgra32, null, 0).CopyPixels(_bodyPixels, stride, 0);
-            _mouth = new MouthArt(Body, true, OpenMouth);
+            _mouth = new MouthArt(Body, true, customMouth ?? OpenMouth);
+            _dozeMouthPixels = new[] {
+                _mouth.Pixels[3],
+                PatchDozeMouth(_bodyPixels, _sourceWidth, _sourceHeight, PeepMouth, 45, 51),
+                PatchDozeMouth(_bodyPixels, _sourceWidth, _sourceHeight, YawnMouth, 45, 48)
+            };
             _faceWeights = CreateFaceWeights();
+        }
+
+        private static byte[] PatchDozeMouth(byte[] basePixels, int width, int height, BitmapSource patchSprite, int left, int top)
+        {
+            byte[] result = (byte[])basePixels.Clone();
+            if (width != 100 || height != 104 || patchSprite == null) return result;
+            int stride = width * 4;
+            int pw = patchSprite.PixelWidth, ph = patchSprite.PixelHeight, pStride = pw * 4;
+            byte[] patch = new byte[pStride * ph];
+            new FormatConvertedBitmap(patchSprite, PixelFormats.Pbgra32, null, 0).CopyPixels(patch, pStride, 0);
+            for (int y = 0; y < ph; y++)
+                for (int x = 0; x < pw; x++)
+                {
+                    int tx = left + x, ty = top + y;
+                    if (tx < 2 || ty < 2 || tx + 2 >= width || ty + 2 >= height) continue;
+                    int dst = ty * stride + tx * 4;
+                    if (basePixels[dst + 3] < 240) continue;
+                    int src = y * pStride + x * 4;
+                    int alpha = patch[src + 3];
+                    if (alpha == 0) continue;
+                    int bodyAlpha = basePixels[dst + 3];
+                    for (int c = 0; c < 3; c++)
+                        result[dst + c] = (byte)Math.Min(bodyAlpha,
+                            (patch[src + c] * bodyAlpha + result[dst + c] * (255 - alpha) + 127) / 255);
+                }
+            return result;
         }
 
         public Vector Offset(Point cursor, Rect bodyBounds)
@@ -81,21 +119,42 @@ namespace WheekKeys
 
         public void Draw(DrawingContext dc, Rect bodyBounds, Vector head, int blinkFrame, int mouth)
         {
-            Draw(dc, bodyBounds, head, blinkFrame, 0, 1, mouth);
+            Draw(dc, bodyBounds, head, blinkFrame, 0, 1, mouth, 0);
         }
 
         public void Draw(DrawingContext dc, Rect bodyBounds, Vector head, int blinkFrame, double drowsiness, double eyeScale, int mouth)
         {
-            mouth = Math.Max(0, Math.Min(3, mouth));
-            if (head != _headDirection)
+            Draw(dc, bodyBounds, head, blinkFrame, drowsiness, eyeScale, mouth, 0);
+        }
+
+        public void Draw(DrawingContext dc, Rect bodyBounds, Vector head, int blinkFrame, double drowsiness, double eyeScale, int mouth, int dozeMouth)
+        {
+            BitmapSource headImage;
+            if (dozeMouth > 0 && dozeMouth <= 2)
             {
-                Array.Clear(_headFrames, 0, _headFrames.Length);
-                _headDirection = head;
+                if (head != _dozeDirection)
+                {
+                    Array.Clear(_dozeHeadFrames, 0, _dozeHeadFrames.Length);
+                    _dozeDirection = head;
+                }
+                if (_dozeHeadFrames[dozeMouth] == null)
+                    _dozeHeadFrames[dozeMouth] = CreateHeadFrame(head, _dozeMouthPixels[dozeMouth]);
+                headImage = _dozeHeadFrames[dozeMouth];
             }
-            if (_headFrames[mouth] == null) _headFrames[mouth] = CreateHeadFrame(head, _mouth.Pixels[mouth]);
+            else
+            {
+                mouth = Math.Max(0, Math.Min(3, mouth));
+                if (head != _headDirection)
+                {
+                    Array.Clear(_headFrames, 0, _headFrames.Length);
+                    _headDirection = head;
+                }
+                if (_headFrames[mouth] == null) _headFrames[mouth] = CreateHeadFrame(head, _mouth.Pixels[mouth]);
+                headImage = _headFrames[mouth];
+            }
             double sx = bodyBounds.Width / _sourceWidth;
             double sy = bodyBounds.Height / _sourceHeight;
-            dc.DrawImage(_headFrames[mouth], new Rect(bodyBounds.X - Padding * sx, bodyBounds.Y - (Padding + BodyLift) * sy,
+            dc.DrawImage(headImage, new Rect(bodyBounds.X - Padding * sx, bodyBounds.Y - (Padding + BodyLift) * sy,
                 (_sourceWidth + Padding * 2) * sx, (_sourceHeight + Padding * 2 + BodyLift) * sy));
             DrawEyes(dc, bodyBounds, head, blinkFrame, drowsiness, eyeScale);
         }
@@ -120,15 +179,20 @@ namespace WheekKeys
 
         private Rect EyeBounds(int x, Rect bounds, Vector head, double eyeScale)
         {
+            double elx = LeftX * _sourceWidth / 100.0;
+            double erx = RightX * _sourceWidth / 100.0;
+            double ey = EyeY * _sourceHeight / 104.0;
+            double es = EyeSize * _sourceWidth / 100.0;
+            double px = x == LeftX ? elx : erx;
             double angle = head.X * TurnRadians;
-            Point center = DeformFace(new Point(x + EyeSize / 2.0, EyeY + EyeSize / 2.0),
+            Point center = DeformFace(new Point(px + es / 2.0, ey + es / 2.0),
                 head, Math.Cos(angle), Math.Sin(angle));
             double tilt = head.X * HeadTiltRadians;
             center = TiltHead(center, head, Math.Cos(tilt), Math.Sin(tilt));
             double sx = bounds.Width / _sourceWidth;
             double sy = bounds.Height / _sourceHeight;
-            Rect eye = new Rect(bounds.X + Math.Round(center.X - EyeSize / 2.0) * sx,
-                bounds.Y + (Math.Round(center.Y - EyeSize / 2.0) - BodyLift) * sy, EyeSize * sx, EyeSize * sy);
+            Rect eye = new Rect(bounds.X + Math.Round(center.X - es / 2.0) * sx,
+                bounds.Y + (Math.Round(center.Y - es / 2.0) - BodyLift) * sy, es * sx, es * sy);
             eye.Inflate(eye.Width * (eyeScale - 1) / 2, eye.Height * (eyeScale - 1) / 2);
             return eye;
         }
@@ -160,14 +224,15 @@ namespace WheekKeys
                     if (y + 1 < _sourceHeight) distance[i] = Math.Min(distance[i], distance[i + _sourceWidth] + 1);
                 }
             double[] weights = new double[distance.Length];
+            double cx = _sourceWidth * 0.50, cy = _sourceHeight * (40.0 / 104.0);
+            double rx = _sourceWidth * 0.35, ry = _sourceHeight * (42.0 / 104.0);
             for (int y = 0; y < _sourceHeight; y++)
                 for (int x = 0; x < _sourceWidth; x++)
                 {
-                    double dx = (x + 0.5 - 50) / 35;
-                    double dy = (y + 0.5 - 40) / 42;
+                    double dx = (x + 0.5 - cx) / rx;
+                    double dy = (y + 0.5 - cy) / ry;
                     double radius = Math.Sqrt(dx * dx + dy * dy);
                     int i = y * _sourceWidth + x;
-                    // Protect the original silhouette and ease the turn into the face interior.
                     weights[i] = SmoothWeight((distance[i] - 4) / 14.0) * SmoothWeight((1 - radius) / 0.45);
                 }
             return weights;
@@ -188,16 +253,20 @@ namespace WheekKeys
         private Point DeformFace(Point point, Vector direction, double cosine, double sine)
         {
             double weight = FaceWeight(point.X, point.Y);
-            double x = point.X - 50, y = point.Y - 40;
+            double cx = _sourceWidth * 0.50, cy = _sourceHeight * (40.0 / 104.0);
+            double x = point.X - cx, y = point.Y - cy;
             double dx = x * cosine - y * sine - x + direction.X * FacePull;
             double dy = x * sine + y * cosine - y + direction.Y * FacePull;
             return point + new Vector(dx, dy) * weight;
         }
 
-        private static Point TiltHead(Point point, Vector direction, double cosine, double sine)
+        private Point TiltHead(Point point, Vector direction, double cosine, double sine)
         {
-            double weight = SmoothWeight((88 - point.Y) / 32);
-            double x = point.X - 50, y = point.Y - 76;
+            double neckY = _sourceHeight * (88.0 / 104.0);
+            double pivotY = _sourceHeight * (76.0 / 104.0);
+            double cx = _sourceWidth * 0.50;
+            double weight = SmoothWeight((neckY - point.Y) / 32.0);
+            double x = point.X - cx, y = point.Y - pivotY;
             double dx = x * cosine - y * sine - x;
             double dy = x * sine + y * cosine - y + direction.Y;
             return point + new Vector(dx, dy) * weight;
@@ -211,10 +280,11 @@ namespace WheekKeys
             byte[] pixels = new byte[face.Length];
             double angle = direction.X * HeadTiltRadians;
             double cosine = Math.Cos(angle), sine = Math.Sin(angle);
+            double neckY = _sourceHeight * (88.0 / 104.0);
             for (int row = 0; row < height; row++)
             {
                 double y = row - Padding + 0.5;
-                if (y >= 88)
+                if (y >= neckY)
                 {
                     Buffer.BlockCopy(face, row * width * 4, pixels, row * width * 4, width * 4);
                     continue;
@@ -252,7 +322,7 @@ namespace WheekKeys
             {
                 double originalY = row;
                 for (int step = 0; step < 8; step++)
-                    originalY = row - BodyLift * SmoothWeight((originalY - (Padding + 80)) / (_sourceHeight - 80.0));
+                    originalY = row - BodyLift * SmoothWeight((originalY - (Padding + 80)) / Math.Max(1.0, _sourceHeight - 80.0));
                 int sourceY = Math.Max(0, Math.Min(height - 1, (int)Math.Round(originalY)));
                 Buffer.BlockCopy(pixels, sourceY * width * 4, extended, row * width * 4, width * 4);
             }
@@ -280,7 +350,6 @@ namespace WheekKeys
                     int sourceX = originalX, sourceY = originalY;
                     if (_faceWeights[original] > 0)
                     {
-                        // Invert the shared facial turn, leaving the protected outline untouched.
                         Point sample = new Point(x, y);
                         for (int step = 0; step < 16; step++)
                         {

@@ -5,15 +5,18 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 using Drawing = System.Drawing;
+using Rectangle = System.Windows.Shapes.Rectangle;
 
 [assembly: AssemblyProduct("WheekKeys")]
 [assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8")]
@@ -33,8 +36,10 @@ namespace WheekKeys
                 if (!created) return;
                 try
                 {
+                    WindowPlacement.EnablePerMonitorDpi();
                     Application app = new Application();
                     app.ShutdownMode = ShutdownMode.OnMainWindowClose;
+                    WheekPackLoader.LoadInstalled(Path.Combine(PetWindow.DataDirectory, "skins"));
                     app.Run(new PetWindow());
                 }
                 catch (Exception ex)
@@ -55,6 +60,11 @@ namespace WheekKeys
         private static extern int GetWindowLong(IntPtr hwnd, int index);
         [DllImport("user32.dll", EntryPoint = "SetWindowLong")]
         private static extern int SetWindowLong(IntPtr hwnd, int index, int value);
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int virtualKey);
+
+        internal static readonly string DataDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WheekKeys");
 
         private readonly PixelPetScene scene;
         private readonly Forms.NotifyIcon tray;
@@ -62,7 +72,11 @@ namespace WheekKeys
         private readonly LocalPeers peers = new LocalPeers();
         private readonly DispatcherTimer timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         private readonly DispatcherTimer networkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
+        private readonly DispatcherTimer updateTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         private readonly FriendDesktop friends;
+        private readonly WindowPlacement placement;
+        private readonly PetWindowOverlay overlay;
+        private readonly AppUpdater updater = new AppUpdater(DataDirectory);
         private readonly Stopwatch clock = Stopwatch.StartNew();
         private long keyCount, clickCount;
         private string nickname = "";
@@ -70,7 +84,7 @@ namespace WheekKeys
         private double nextSave;
         private bool hideForSogou = false;
         private DesktopInput input;
-        private bool clickThrough;
+        private bool clickThrough, altHeld;
         private bool ready;
         private PetSettings settingsWindow;
         private Drawing.Icon ownedIcon;
@@ -95,8 +109,12 @@ namespace WheekKeys
             view.Height = double.NaN;
             view.Stretch = Stretch.Uniform;
             view.Child = scene;
-            Content = view;
-            settingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WheekKeys", "settings.txt");
+            Grid panel = new Grid { Children = { view } };
+            overlay = new PetWindowOverlay(panel, scene);
+            Content = panel;
+            WheekPackLoader.EnableDrop(this, ImportSkin);
+            settingsPath = Path.Combine(DataDirectory, "settings.txt");
+            placement = new WindowPlacement(this, delegate { SaveSettings(); }, null);
             RestoreSettings();
             friends = new FriendDesktop(this, view);
             tray = new Forms.NotifyIcon();
@@ -112,12 +130,33 @@ namespace WheekKeys
             tray.ContextMenuStrip = BuildTrayMenu();
             tray.Visible = true;
             SourceInitialized += OnSourceInitialized;
-            Loaded += delegate { ready = true; timer.Start(); networkTimer.Start(); };
+            Loaded += delegate
+            {
+                if (!ready) updateTimer.Start();
+                ready = true;
+                timer.Start();
+                networkTimer.Start();
+            };
+            updateTimer.Tick += async delegate
+            {
+                updateTimer.Stop();
+                await updater.CheckAsync(false);
+            };
             networkTimer.Tick += delegate
             {
                 double now = clock.Elapsed.TotalSeconds;
+                bool pressed = IsKeyDown(0x12);
+                if (!pressed && input != null) input.ClearHeldAlt();
+                SetAltHeld(pressed);
                 peers.Tick(now, scene.Skin, keyCount, clickCount, nickname);
-                friends.Update(peers, now, clickThrough, scene.ShowKeyLabels);
+                friends.Update(peers, now, clickThrough, scene.ShowKeyLabels, altHeld, scene.Desk);
+                LocalPeers.ReceivedInteraction interaction;
+                if (peers.TryTakeReceivedInteraction(out interaction))
+                {
+                    scene.TriggerHop();
+                    overlay.Show(interaction.Kind == "feed" ? "来自 " + interaction.DisplayName + " 的投喂 ☘" :
+                        interaction.DisplayName + " 戳了戳你的小猪 ♡");
+                }
             };
             timer.Tick += delegate
             {
@@ -130,14 +169,6 @@ namespace WheekKeys
                     nextSave = now + 5;
                 }
             };
-            MouseLeftButtonDown += delegate(object sender, MouseButtonEventArgs e)
-            {
-                if (e.ButtonState == MouseButtonState.Pressed)
-                {
-                    try { DragMove(); } catch (InvalidOperationException) { }
-                    SaveSettings();
-                }
-            };
             MouseRightButtonUp += delegate(object sender, MouseButtonEventArgs e)
             {
                 Point screen = PointToScreen(e.GetPosition(this));
@@ -148,6 +179,8 @@ namespace WheekKeys
             {
                 timer.Stop();
                 networkTimer.Stop();
+                updateTimer.Stop();
+                updater.Cancel();
                 friends.Dispose();
                 peers.Dispose();
                 SaveSettings();
@@ -162,11 +195,29 @@ namespace WheekKeys
         private void OnSourceInitialized(object sender, EventArgs e)
         {
             HwndSource source = (HwndSource)PresentationSource.FromVisual(this);
+            altHeld = IsKeyDown(0x12);
             ApplyWindowStyles(source.Handle);
-            EnsureVisible();
             input = new DesktopInput(source, OnKey, OnClick,
                 delegate(double dx, double dy) { if (IsVisible) scene.MoveMouse(dx, dy); },
                 delegate(int delta) { if (IsVisible) scene.ScrollMouse(delta); });
+            input.AltStateChanged += SetAltHeld;
+        }
+
+        internal static bool IsKeyDown(int virtualKey) { return (GetAsyncKeyState(virtualKey) & 0x8000) != 0; }
+
+        private void SetAltHeld(bool value)
+        {
+            if (altHeld == value) return;
+            altHeld = value;
+            if (clickThrough) RefreshPointerMode();
+        }
+
+        private void RefreshPointerMode()
+        {
+            if (clickThrough && !altHeld) placement.StopDrag();
+            IntPtr handle = new WindowInteropHelper(this).Handle;
+            if (handle != IntPtr.Zero) ApplyWindowStyles(handle);
+            friends.SetPointerMode(clickThrough, altHeld);
         }
 
         private void OnKey(int scan, bool firstPress)
@@ -193,11 +244,12 @@ namespace WheekKeys
         private void ApplyWindowStyles(IntPtr handle)
         {
             int style = GetWindowLong(handle, GwlExStyle) | WsExNoActivate | WsExToolWindow;
-            if (clickThrough) style |= WsExTransparent; else style &= ~WsExTransparent;
+            if (clickThrough && !altHeld) style |= WsExTransparent; else style &= ~WsExTransparent;
             SetWindowLong(handle, GwlExStyle, style);
+            overlay.SetAltHint(clickThrough && altHeld);
         }
 
-        private void OpenSettings(Drawing.Point screenPoint)
+        internal void OpenSettings(Drawing.Point screenPoint)
         {
             if (settingsWindow != null && settingsWindow.IsVisible)
             {
@@ -236,6 +288,7 @@ namespace WheekKeys
         }
 
         internal PetSkin ActiveSkin { get { return scene.Skin; } }
+        internal DeskSkin ActiveDeskSkin { get { return scene.Desk; } }
         internal bool LabelsVisible { get { return scene.ShowKeyLabels; } }
         internal bool MouseClickThrough { get { return clickThrough; } }
         internal double PetWidth { get { return Width; } }
@@ -244,6 +297,38 @@ namespace WheekKeys
         internal long KeyCount { get { return keyCount; } }
         internal long ClickCount { get { return clickCount; } }
         internal string Nickname { get { return nickname; } }
+        internal AppUpdater Updater { get { return updater; } }
+
+        internal async Task InstallUpdateAsync()
+        {
+            if (await updater.InstallAsync()) Close();
+        }
+
+        internal bool TrySendInteraction(string peerId, string kind)
+        {
+            if (!peers.TrySendInteraction(peerId, kind, clock.Elapsed.TotalSeconds)) return false;
+            friends.ShowInteraction(peerId, kind);
+            return true;
+        }
+
+        internal void ImportSkin(string path)
+        {
+            string message;
+            try
+            {
+                PetSkin skin = WheekPackLoader.Install(path, Path.Combine(Path.GetDirectoryName(settingsPath), "skins"));
+                scene.InvalidateSkinCache(skin.Id);
+                SetSkin(skin);
+                message = "已导入 " + skin.Name;
+            }
+            catch (Exception e)
+            {
+                if (!WheekPackLoader.IsPackError(e)) throw;
+                message = "导入失败，请检查外观包和文件权限。";
+            }
+            if (settingsWindow != null) settingsWindow.SkinImported(message);
+            if (settingsWindow == null || !settingsWindow.IsActive) overlay.Show(message);
+        }
 
         internal bool TrySetNickname(string input, out string error)
         {
@@ -286,8 +371,7 @@ namespace WheekKeys
         internal void SetClickThrough(bool value)
         {
             clickThrough = value;
-            IntPtr handle = new WindowInteropHelper(this).Handle;
-            if (handle != IntPtr.Zero) ApplyWindowStyles(handle);
+            RefreshPointerMode();
             RefreshTrayMenu();
             SaveSettings();
         }
@@ -307,11 +391,18 @@ namespace WheekKeys
             SaveSettings();
         }
 
+        internal void SetDeskSkin(DeskSkin desk)
+        {
+            scene.Desk = desk;
+            friends.SetDeskSkin(scene.Desk);
+            RefreshTrayMenu();
+            SaveSettings();
+        }
+
         internal void SetWidth(double width)
         {
-            Width = Math.Max(180, Math.Min(600, width));
-            Height = Width * 308.0 / 400.0;
-            EnsureVisible();
+            width = Math.Max(180, Math.Min(600, width));
+            placement.Resize(width, width * 308.0 / 400.0);
             SaveSettings();
         }
 
@@ -340,7 +431,7 @@ namespace WheekKeys
             menu.Items.Add("桌宠设置…", null, delegate { OpenSettingsAtCursor(); });
             menu.Items.Add(new Forms.ToolStripSeparator());
             Forms.ToolStripMenuItem skins = new Forms.ToolStripMenuItem("切换外观");
-            foreach (PetSkin skin in PetSkin.All)
+            foreach (PetSkin skin in PetSkin.Available)
             {
                 PetSkin currentSkin = skin;
                 Forms.ToolStripMenuItem item = new Forms.ToolStripMenuItem(currentSkin.Name);
@@ -349,6 +440,16 @@ namespace WheekKeys
                 skins.DropDownItems.Add(item);
             }
             menu.Items.Add(skins);
+            Forms.ToolStripMenuItem desks = new Forms.ToolStripMenuItem("切换键鼠");
+            foreach (DeskSkin desk in DeskSkin.All)
+            {
+                DeskSkin currentDesk = desk;
+                Forms.ToolStripMenuItem item = new Forms.ToolStripMenuItem(currentDesk.Name);
+                item.Checked = scene.Desk.Id == currentDesk.Id;
+                item.Click += delegate { SetDeskSkin(currentDesk); };
+                desks.DropDownItems.Add(item);
+            }
+            menu.Items.Add(desks);
             foreach (MenuAction entry in MenuActions())
             {
                 MenuAction current = entry;
@@ -369,26 +470,8 @@ namespace WheekKeys
             Rect area = SystemParameters.WorkArea;
             Left = Math.Max(area.Left, area.Right - Width - 12);
             Top = Math.Max(area.Top, area.Bottom - Height - 12);
+            placement.IsDockedToTaskbar = false;
             SaveSettings();
-        }
-
-        private void EnsureVisible()
-        {
-            // Use the monitor work area containing the window center, expressed in WPF units.
-            try
-            {
-                HwndSource source = PresentationSource.FromVisual(this) as HwndSource;
-                Matrix toPixels = source == null ? Matrix.Identity : source.CompositionTarget.TransformToDevice;
-                Matrix fromPixels = source == null ? Matrix.Identity : source.CompositionTarget.TransformFromDevice;
-                Point center = toPixels.Transform(new Point(Left + Width / 2, Top + Height / 2));
-                Forms.Screen screen = Forms.Screen.FromPoint(new Drawing.Point((int)center.X, (int)center.Y));
-                Drawing.Rectangle work = screen.WorkingArea;
-                Point start = fromPixels.Transform(new Point(work.Left, work.Top));
-                Point end = fromPixels.Transform(new Point(work.Right, work.Bottom));
-                Left = Math.Max(start.X, Math.Min(Left, Math.Max(start.X, end.X - Width)));
-                Top = Math.Max(start.Y, Math.Min(Top, Math.Max(start.Y, end.Y - Height)));
-            }
-            catch { MoveToCorner(); }
         }
 
         private void RestoreSettings()
@@ -420,6 +503,9 @@ namespace WheekKeys
                 string loadedName;
                 if (values.Length > 9 && PetName.TryNormalize(values[9], out loadedName) && loadedName == values[9])
                     nickname = loadedName;
+                bool docked;
+                if (values.Length > 10 && bool.TryParse(values[10], out docked)) placement.IsDockedToTaskbar = docked;
+                if (values.Length > 11) scene.Desk = DeskSkin.FromId(values[11]);
             }
             catch { MoveToCorner(); }
         }
@@ -434,13 +520,77 @@ namespace WheekKeys
                 File.WriteAllLines(pending, new string[] {
                     Left.ToString("R", CultureInfo.InvariantCulture), Top.ToString("R", CultureInfo.InvariantCulture),
                     Width.ToString("R", CultureInfo.InvariantCulture), scene.ShowKeyLabels.ToString(), clickThrough.ToString(), scene.Skin.Id,
-                    hideForSogou.ToString(), keyCount.ToString(CultureInfo.InvariantCulture), clickCount.ToString(CultureInfo.InvariantCulture), nickname });
+                    hideForSogou.ToString(), keyCount.ToString(CultureInfo.InvariantCulture), clickCount.ToString(CultureInfo.InvariantCulture), nickname,
+                    placement.IsDockedToTaskbar.ToString(), scene.Desk.Id });
                 if (File.Exists(settingsPath)) File.Replace(pending, settingsPath, null);
                 else File.Move(pending, settingsPath);
                 countsDirty = false;
                 return true;
             }
             catch { return false; }
+        }
+    }
+
+    internal sealed class PetWindowOverlay
+    {
+        private readonly Grid host;
+        private readonly PixelPetScene scene;
+        private readonly Grid altHint;
+        private readonly Canvas notices = new Canvas { IsHitTestVisible = false };
+        private readonly Border bubble;
+        private readonly TextBlock text;
+        private readonly TranslateTransform lift = new TranslateTransform();
+        private readonly double clearance;
+
+        internal PetWindowOverlay(Grid host, PixelPetScene scene, double clearance = 4)
+        {
+            this.host = host;
+            this.scene = scene;
+            this.clearance = clearance;
+            var frame = new Rectangle
+            {
+                RadiusX = 12, RadiusY = 12, Stroke = new SolidColorBrush(Color.FromArgb(180, 226, 158, 88)),
+                StrokeThickness = 1.5, StrokeDashArray = new DoubleCollection { 4, 3 },
+                Fill = new SolidColorBrush(Color.FromArgb(1, 255, 234, 204))
+            };
+            var caption = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(224, 255, 234, 204)), CornerRadius = new CornerRadius(9),
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(0, 0, 0, 3), Padding = new Thickness(7, 2, 7, 2), IsHitTestVisible = false,
+                Child = new TextBlock { Text = "按住 Alt 可拖动 · 松开恢复穿透", FontSize = 10, Foreground = Brushes.SaddleBrown }
+            };
+            altHint = new Grid { Visibility = Visibility.Collapsed, Children = { frame, caption } };
+            text = new TextBlock { Foreground = Brushes.SaddleBrown, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis };
+            bubble = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(238, 255, 244, 217)), CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(8, 3, 8, 3), Child = text, RenderTransform = lift, Opacity = 0
+            };
+            notices.Children.Add(bubble);
+            host.Children.Add(altHint);
+            host.Children.Add(notices);
+        }
+
+        internal void SetAltHint(bool enabled) { altHint.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed; }
+
+        internal void Show(string message)
+        {
+            if (!host.IsVisible || host.ActualWidth < 12) return;
+            text.Text = message;
+            bubble.MaxWidth = host.ActualWidth - 8;
+            bubble.Measure(new Size(bubble.MaxWidth, double.PositiveInfinity));
+            Point head = scene.TranslatePoint(scene.HeadTop, host);
+            double width = bubble.DesiredSize.Width, height = bubble.DesiredSize.Height;
+            Canvas.SetLeft(bubble, Math.Max(4, Math.Min(host.ActualWidth - width - 4, head.X - width / 2)));
+            Canvas.SetTop(bubble, Math.Max(7, head.Y - height - clearance));
+            lift.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(4, -7, TimeSpan.FromSeconds(2.2)));
+            var fade = new DoubleAnimationUsingKeyFrames();
+            fade.KeyFrames.Add(new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(0.12))));
+            fade.KeyFrames.Add(new LinearDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(1.4))));
+            fade.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(2.2))));
+            bubble.BeginAnimation(UIElement.OpacityProperty, null);
+            bubble.BeginAnimation(UIElement.OpacityProperty, fade);
         }
     }
 }

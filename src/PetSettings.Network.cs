@@ -327,7 +327,7 @@ namespace WheekKeys
                 PartnerRow row;
                 if (!partnerRows.TryGetValue(entry.Key, out row))
                 {
-                    row = new PartnerRow(entry.Key);
+                    row = new PartnerRow(this, entry.Key);
                     partnerRows.Add(entry.Key, row);
                     roster.Children.Insert(index, row);
                 }
@@ -371,7 +371,7 @@ namespace WheekKeys
             private readonly TextBlock detail = Label(10, Muted);
             private readonly string shortId;
 
-            public PartnerRow(string id)
+            public PartnerRow(PetSettings settings, string id)
             {
                 BorderBrush = Line;
                 BorderThickness = new Thickness(0, 1, 0, 0);
@@ -392,6 +392,27 @@ namespace WheekKeys
                 Grid.SetColumn(clicks, 2);
                 row.Children.Add(keys);
                 row.Children.Add(clicks);
+                row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                StackPanel interactions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(43, 1, 0, 0) };
+                foreach (string kind in new[] { "poke", "feed" })
+                {
+                    string action = kind;
+                    Button button = settings.ActionButton(action == "poke" ? "戳一戳" : "投喂", Paper2, delegate
+                    {
+                        bool sent = settings.owner.TrySendInteraction(id, action);
+                        settings.formMessage = sent ? "已向 " + name.Text + " " + (action == "poke" ? "打招呼。" : "送出一片草叶。") :
+                            "互动暂未发送，请稍后再试。";
+                        settings.RefreshActivity();
+                    });
+                    button.Height = 20;
+                    button.Padding = new Thickness(6, 0, 6, 0);
+                    button.Margin = new Thickness(0, 0, 4, 0);
+                    interactions.Children.Add(button);
+                }
+                Grid.SetRow(interactions, 1);
+                Grid.SetColumnSpan(interactions, 3);
+                row.Children.Add(interactions);
             }
 
             public void Update(LocalPeers.Peer peer)

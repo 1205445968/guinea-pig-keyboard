@@ -10,23 +10,36 @@ namespace WheekKeys
     {
         internal static readonly Rect RestBounds = new Rect(135, 123, 129, 85);
         private static readonly Dictionary<string, DrawnPetArt> Cache = new Dictionary<string, DrawnPetArt>();
-        private static readonly Pen LimbOutline = new Pen(Brush(81, 58, 39), 1.05);
-        private static readonly BitmapSource[] MouseSprites = MouseFrames();
+        private static readonly Dictionary<string, BitmapSource[]> MouseCache = new Dictionary<string, BitmapSource[]>();
         private readonly BitmapSource body;
+        private readonly MouthArt mouthArt;
         private readonly BitmapSource paw;
         private readonly BitmapSource[] eyes;
         private readonly Brush fur;
+        private readonly Pen limbOutline;
         public readonly ImageSource Portrait;
 
-        private DrawnPetArt(string coat)
+        private DrawnPetArt(PetSkin skin)
         {
+            string coat = skin.NetworkId ?? "tricolor";
             bool tricolor = coat == "tricolor";
-            body = PixelPetScene.LoadSprite(tricolor ? "guinea-pig.png" : coat + "-body.png");
-            paw = PixelPetScene.LoadSprite(tricolor ? "paw.png" : coat + "-paw.png");
-            fur = coat == "teddy" ? Brush(168, 105, 70)
-                : coat == "silver-agouti" ? Brush(161, 144, 134) : Brush(250, 228, 203);
-            BitmapSource atlas = PixelPetScene.LoadSprite(coat + "-eyes.png");
-            int width = atlas.PixelWidth / 4, height = atlas.PixelHeight / 3;
+            body = (BitmapSource)skin.CustomBody ?? PixelPetScene.LoadSprite(tricolor ? "guinea-pig.png" : coat + "-body.png");
+            mouthArt = new MouthArt(body, false);
+            paw = (BitmapSource)skin.CustomPaw ?? PixelPetScene.LoadSprite(tricolor ? "paw.png" : coat + "-paw.png");
+
+            Color defaultFur = coat == "teddy" ? Color.FromRgb(177, 113, 72)
+                : coat == "silver-agouti" ? Color.FromRgb(183, 159, 144)
+                : coat == "longhair" ? Color.FromRgb(249, 231, 211)
+                : Color.FromRgb(252, 234, 212);
+            Color defaultInk = coat == "teddy" ? Color.FromRgb(74, 47, 30)
+                : coat == "silver-agouti" ? Color.FromRgb(78, 56, 42)
+                : Color.FromRgb(81, 58, 39);
+            fur = FreezeBrush(skin.CustomFurColor ?? defaultFur);
+            limbOutline = new Pen(FreezeBrush(skin.CustomInkColor ?? defaultInk), 1.05);
+            limbOutline.Freeze();
+
+            BitmapSource atlas = (BitmapSource)skin.CustomEyes ?? PixelPetScene.LoadSprite(coat + "-eyes.png");
+            int width = Math.Max(1, atlas.PixelWidth / 4), height = Math.Max(1, atlas.PixelHeight / 3);
             eyes = new BitmapSource[12];
             for (int frame = 0; frame < eyes.Length; frame++)
             {
@@ -34,7 +47,8 @@ namespace WheekKeys
                 eyes[frame].Freeze();
             }
             var drawing = new DrawingGroup();
-            using (DrawingContext dc = drawing.Open()) DrawFace(dc, new Rect(0, 0, RestBounds.Width, RestBounds.Height), 0);
+            using (DrawingContext dc = drawing.Open()) DrawFace(dc, new Rect(0, 0, RestBounds.Width, RestBounds.Height), 0, 0, 1.0);
+            drawing.Freeze();
             var portrait = new DrawingImage(drawing);
             portrait.Freeze();
             Portrait = portrait;
@@ -45,38 +59,64 @@ namespace WheekKeys
             DrawnPetArt art;
             if (!Cache.TryGetValue(skin.Id, out art))
             {
-                art = new DrawnPetArt(skin.NetworkId);
-                Cache.Add(skin.Id, art);
+                art = new DrawnPetArt(skin);
+                Cache[skin.Id] = art;
             }
             return art;
         }
 
+        internal static void Invalidate(string skinId)
+        {
+            Cache.Remove(skinId);
+        }
+
         public void DrawFace(DrawingContext dc, Rect bounds, int frame)
         {
+            DrawFace(dc, bounds, frame, 0, 1.0);
+        }
+
+        public void DrawFace(DrawingContext dc, Rect bounds, int frame, int mouthFrame, double eyeScale)
+        {
+            int safeEye = Math.Max(0, Math.Min(eyes.Length - 1, frame));
+            int safeMouth = Math.Max(0, Math.Min(mouthArt.Frames.Length - 1, mouthFrame));
             dc.PushTransform(new ScaleTransform(-1, 1, bounds.X + bounds.Width / 2, 0));
-            dc.DrawImage(body, bounds);
-            dc.DrawImage(eyes[frame], new Rect(bounds.X + bounds.Width * 0.58, bounds.Y + bounds.Height * 0.25,
-                bounds.Width * 0.22, bounds.Height * 0.30));
+            dc.DrawImage(mouthArt.Frames[safeMouth], bounds);
+            Rect eyeRect = new Rect(bounds.X + bounds.Width * 0.58, bounds.Y + bounds.Height * 0.25,
+                bounds.Width * 0.22, bounds.Height * 0.30);
+            if (Math.Abs(eyeScale - 1.0) > 0.001)
+                eyeRect.Inflate(eyeRect.Width * (eyeScale - 1.0) * 0.5, eyeRect.Height * (eyeScale - 1.0) * 0.5);
+            dc.DrawImage(eyes[safeEye], eyeRect);
             dc.Pop();
         }
 
-        private static BitmapSource[] MouseFrames()
+        private static BitmapSource[] GetMouseFrames(DeskSkin desk)
         {
-            var sheet = PixelPetScene.LoadSprite("mouse.png");
-            var frames = new BitmapSource[3];
-            int w = sheet.PixelWidth / frames.Length;
-            for (int i = 0; i < frames.Length; i++)
+            desk = desk ?? DeskSkin.Default;
+            BitmapSource[] frames;
+            if (!MouseCache.TryGetValue(desk.Id, out frames))
             {
-                frames[i] = new CroppedBitmap(sheet, new Int32Rect(i * w, 0, w, sheet.PixelHeight));
-                frames[i].Freeze();
+                var sheet = PixelPetScene.LoadSprite(desk.DrawnMouseResource);
+                frames = new BitmapSource[3];
+                int w = sheet.PixelWidth / frames.Length;
+                for (int i = 0; i < frames.Length; i++)
+                {
+                    frames[i] = new CroppedBitmap(sheet, new Int32Rect(i * w, 0, w, sheet.PixelHeight));
+                    frames[i].Freeze();
+                }
+                MouseCache[desk.Id] = frames;
             }
             return frames;
         }
 
         public void DrawMouse(DrawingContext dc, Point position, double press, bool rightButton)
         {
+            DrawMouse(dc, DeskSkin.Default, position, press, rightButton);
+        }
+
+        public void DrawMouse(DrawingContext dc, DeskSkin desk, Point position, double press, bool rightButton)
+        {
             int frame = press > 0.32 ? (rightButton ? 2 : 1) : 0;
-            dc.DrawImage(MouseSprites[frame], new Rect(position.X - 20, position.Y - 18, 40, 36));
+            dc.DrawImage(GetMouseFrames(desk)[frame], new Rect(position.X - 20, position.Y - 18, 40, 36));
         }
 
         public void DrawPaw(DrawingContext dc, Point tip, Rect chest, bool far, double mouseGrip)
@@ -103,7 +143,7 @@ namespace WheekKeys
                     path.LineTo(joint + normal * 4.5, true, true);
                     path.QuadraticBezierTo(bend + normal * 5.5, shoulder + normal * 6.2, true, true);
                 }
-                dc.DrawGeometry(fur, LimbOutline, arm);
+                dc.DrawGeometry(fur, limbOutline, arm);
             }
             dc.PushTransform(new TranslateTransform(tip.X, tip.Y));
             dc.PushTransform(new RotateTransform(angle * 180 / Math.PI));
@@ -114,9 +154,9 @@ namespace WheekKeys
             dc.Pop();
         }
 
-        private static SolidColorBrush Brush(byte r, byte g, byte b)
+        private static SolidColorBrush FreezeBrush(Color c)
         {
-            var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+            var brush = new SolidColorBrush(c);
             brush.Freeze();
             return brush;
         }

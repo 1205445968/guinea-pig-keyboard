@@ -1,3 +1,8 @@
+using System;
+using System.Collections.Generic;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+
 namespace WheekKeys
 {
     internal sealed class PetSkin
@@ -25,11 +30,25 @@ namespace WheekKeys
             Drawn("longhair", "手绘长毛猪")
         };
 
+        private static readonly SortedDictionary<string, PetSkin> custom = new SortedDictionary<string, PetSkin>(StringComparer.Ordinal);
+        private static volatile IReadOnlyList<PetSkin> available = Array.AsReadOnly(All);
+        public static IReadOnlyList<PetSkin> Available { get { return available; } }
+
         public readonly string Id;
         public readonly string Name;
         public readonly string PixelCoatId;
         public readonly string NetworkId;
         public bool IsDrawn { get { return PixelCoatId == null; } }
+        public bool IsCustom { get { return BaseSkin != null; } }
+        public PetSkin BaseSkin { get; private set; }
+        public BitmapImage CustomBody { get; internal set; }
+        public BitmapImage CustomPaw { get; internal set; }
+        public BitmapImage CustomEyes { get; internal set; }
+        public BitmapImage CustomMouth { get; internal set; }
+        public Color? CustomFurColor { get; internal set; }
+        public Color? CustomInkColor { get; internal set; }
+        public Color? CustomEyeColor { get; internal set; }
+        public string Author { get; internal set; }
 
         private PetSkin(string id, string name, string pixelCoatId, string networkId)
         {
@@ -42,6 +61,26 @@ namespace WheekKeys
         private static PetSkin Drawn(string coatId, string name)
         {
             return new PetSkin("drawn-" + coatId, name, null, coatId);
+        }
+
+        internal static PetSkin CreateCustom(string id, string name, bool drawn, string baseCoat)
+        {
+            PetSkin basis = Find(baseCoat);
+            if (basis == null || basis.IsCustom) basis = All[0];
+            if (basis.IsDrawn != drawn)
+                basis = Find(drawn ? "drawn-" + basis.NetworkId : basis.NetworkId);
+            return new PetSkin("wheek-" + id, name, basis.PixelCoatId, basis.NetworkId) { BaseSkin = basis };
+        }
+
+        internal static void Register(PetSkin skin)
+        {
+            lock (custom)
+            {
+                custom[skin.Id] = skin;
+                List<PetSkin> skins = new List<PetSkin>(All);
+                skins.AddRange(custom.Values);
+                available = skins.AsReadOnly();
+            }
         }
 
         public static PetSkin FromId(string id) { return Find(id) ?? All[0]; }
@@ -70,7 +109,7 @@ namespace WheekKeys
                 case "longhair-chocolate": replacement = "pixel-longhair-chocolate"; break;
                 case "longhair-californian": replacement = "pixel-longhair-californian"; break;
             }
-            foreach (PetSkin skin in All)
+            foreach (PetSkin skin in Available)
                 if (skin.Id == (replacement ?? id)) return skin;
             return null;
         }
