@@ -119,7 +119,6 @@ final class PetView: NSView {
     private let right = Stroke(CGPoint(x: 215, y: 213))
     private var skin = PetSkin.all[0]
     private var images: [String: CGImage] = [:]
-    private var eyeFrames: [String: [CGImage]] = [:]
     private var mouseFrames: [String: [CGImage]] = [:]
     private var timer: Timer?
     private var blinkTimer: Timer?
@@ -338,7 +337,7 @@ final class PetView: NSView {
     private func currentPose(_ now: TimeInterval) -> Pose {
         var lp = left.position(now), rp = right.position(now)
         let grip = smooth(mouseGrip)
-        let maxLean: CGFloat = skin.isDrawn ? 115 : 90
+        let maxLean: CGFloat = 90
         var lean = max(-78, min(maxLean, ((lp.x - left.rest.x) + (rp.x - right.rest.x)) * 0.84))
         lean += (mousePosition.x - 8 - 135 - lean) * grip
         let reachY = max(0, max(lp.y - left.rest.y, rp.y - right.rest.y))
@@ -357,9 +356,7 @@ final class PetView: NSView {
         lp = mix(lp, mouseTip, grip)
         lp.y -= sin(grip * .pi) * 5
         let nod = CGFloat((doze?.nod ?? 0) * 2)
-        let body = skin.isDrawn
-            ? CGRect(x: 135 + lean, y: 123 + dip + nod, width: 129, height: 85 - nod)
-            : CGRect(x: 126 + lean.rounded(), y: 39 + dip.rounded() + nod, width: 174, height: 181 - nod)
+        let body = CGRect(x: 126 + lean.rounded(), y: 39 + dip.rounded() + nod, width: 174, height: 181 - nod)
         return Pose(body: body,
                     leftTip: lp, rightTip: rp)
     }
@@ -385,22 +382,6 @@ final class PetView: NSView {
         guard let image = image(name) else { return }
         drawImage(image, rect, ctx)
     }
-    private func eyeImage(_ frame: Int) -> CGImage? {
-        guard skin.isDrawn, (0..<12).contains(frame) else { return nil }
-        if eyeFrames[skin.id] == nil {
-            let atlasName = skin.networkID + "-eyes.png"
-            guard let atlas = image(atlasName), atlas.width % 4 == 0, atlas.height % 3 == 0 else { return nil }
-            let width = atlas.width / 4, height = atlas.height / 3
-            var frames: [CGImage] = []
-            for index in 0..<12 {
-                guard let cropped = atlas.cropping(to: CGRect(x: (index % 4) * width, y: (index / 4) * height,
-                                                               width: width, height: height)) else { return nil }
-                frames.append(cropped)
-            }
-            eyeFrames[skin.id] = frames
-        }
-        return eyeFrames[skin.id]?[frame]
-    }
     private func drawImage(_ image: CGImage, _ rect: CGRect, _ ctx: CGContext) {
         ctx.saveGState()
         ctx.translateBy(x: rect.minX, y: rect.maxY)
@@ -409,7 +390,7 @@ final class PetView: NSView {
         ctx.restoreGState()
     }
     private func mouseImage(_ frame: Int) -> CGImage? {
-        let name = skin.isDrawn ? "drawn-mouse.png" : "mouse.png"
+        let name = "mouse.png"
         if mouseFrames[name] == nil {
             guard let atlas = image(name), atlas.width % 3 == 0 else { return nil }
             let width = atlas.width / 3
@@ -425,7 +406,7 @@ final class PetView: NSView {
         return frames[frame]
     }
     private func drawKeyboard(_ ctx: CGContext) {
-        let name = skin.isDrawn ? "drawn-keyboard.png" : "keyboard.png"
+        let name = "keyboard.png"
         guard let artwork = image(name) else { return }
         drawImage(artwork, Self.keyboardBounds, ctx)
     }
@@ -438,7 +419,7 @@ final class PetView: NSView {
         ctx.translateBy(x: (bounds.width - 400 * scale) / 2, y: (bounds.height - 308 * scale) / 2)
         ctx.scaleBy(x: scale, y: scale)
         ctx.translateBy(x: 9, y: 0)
-        ctx.interpolationQuality = skin.isDrawn ? .high : .none
+        ctx.interpolationQuality = .none
         let now = ProcessInfo.processInfo.systemUptime
         let pose = currentPose(now)
         let l = left.active ? contact(now - left.started) : 0
@@ -449,33 +430,15 @@ final class PetView: NSView {
         let eyeFrame = doze.map { $0.eyes == 2 ? 11 : 10 } ?? awakeEyes
         let mouth = doze?.mouth ?? (now - mouthStarted < 0.145 ? 1 : 0)
         let bodyRect = pose.body
-        if skin.isDrawn {
-            drawDeskAndPaws(pose, l: l, r: r, mouseFrame: mouseFrame, ctx)
-            ctx.saveGState()
-            ctx.translateBy(x: 2 * bodyRect.midX, y: 0)
-            ctx.scaleBy(x: -1, y: 1)
-            sprite(skin.body, bodyRect, ctx)
-            let gaze = [0, 2, 1, 3, 4, 6, 5, 8, 7][gazeFrame]
-            let frame = doze.map { $0.eyes == 2 ? 11 : 10 }
-                ?? (blinkStarted.flatMap { Self.blinkFrame(elapsed: now - $0) } ?? (max(l, r) > 0.45 ? 10 : gaze))
-            if let eyes = eyeImage(frame) {
-                ctx.interpolationQuality = .high
-                drawImage(eyes, CGRect(x: bodyRect.minX + bodyRect.width * 0.58,
-                                       y: bodyRect.minY + bodyRect.height * 0.25,
-                                       width: bodyRect.width * 0.22, height: bodyRect.height * 0.30), ctx)
-            }
-            ctx.restoreGState()
-        } else {
-            sprite(skin.body, bodyRect, ctx)
-            if mouth > 0 {
-                let sx = bodyRect.width / 100, sy = bodyRect.height / 104
-                sprite(mouth == 1 ? "mouth-peep.png" : "mouth-yawn.png",
-                       CGRect(x: bodyRect.minX + 45 * sx, y: bodyRect.minY + 49 * sy,
-                              width: 11 * sx, height: (mouth == 1 ? 5 : 11) * sy), ctx)
-            }
-            skin.drawEyes(in: bodyRect, frame: eyeFrame, context: ctx)
-            drawDeskAndPaws(pose, l: l, r: r, mouseFrame: mouseFrame, ctx)
+        sprite(skin.body, bodyRect, ctx)
+        if mouth > 0 {
+            let sx = bodyRect.width / 100, sy = bodyRect.height / 104
+            sprite(mouth == 1 ? "mouth-peep.png" : "mouth-yawn.png",
+                   CGRect(x: bodyRect.minX + 45 * sx, y: bodyRect.minY + 49 * sy,
+                          width: 11 * sx, height: (mouth == 1 ? 5 : 11) * sy), ctx)
         }
+        skin.drawEyes(in: bodyRect, frame: eyeFrame, context: ctx)
+        drawDeskAndPaws(pose, l: l, r: r, mouseFrame: mouseFrame, ctx)
         if showKeyLabels {
             drawBubble(left, now, false, bodyRect, ctx)
             drawBubble(right, now, true, bodyRect, ctx)
@@ -487,7 +450,7 @@ final class PetView: NSView {
         if l > 0 { drawPressed(keyInfo(left.code), l, ctx) }
         if r > 0 { drawPressed(keyInfo(right.code), r, ctx) }
         if let mouse = mouseImage(mouseFrame) {
-            let origin = skin.isDrawn ? mousePosition : CGPoint(x: mousePosition.x.rounded(), y: mousePosition.y.rounded())
+            let origin = CGPoint(x: mousePosition.x.rounded(), y: mousePosition.y.rounded())
             drawImage(mouse, CGRect(x: origin.x - 20, y: origin.y - 18, width: 40, height: 36), ctx)
         }
         drawPaw(pose.rightTip, pose.body, true, ctx)
@@ -512,9 +475,9 @@ final class PetView: NSView {
     }
     private func drawPaw(_ tip: CGPoint, _ chest: CGRect, _ far: Bool, _ ctx: CGContext) {
         let grip = far ? CGFloat(0) : smooth(mouseGrip)
-        let anchorX = chest.minX + (far ? (skin.isDrawn ? 75 : 89) : (skin.isDrawn ? 36 : 46))
+        let anchorX = chest.minX + (far ? 89 : 46)
         let shoulder = CGPoint(x: anchorX + max(-13, min(13, (tip.x - anchorX) * 0.30)),
-                               y: chest.minY + (skin.isDrawn ? 63 : chest.height * (153.0 / 181.0)))
+                               y: chest.minY + chest.height * (153.0 / 181.0))
         let reachX = tip.x - shoulder.x, reachY = tip.y - shoulder.y
         var angle = max(-0.58, min(0.58, -atan2(reachX, reachY)))
         angle += (0.52 - angle) * grip
@@ -548,7 +511,7 @@ final class PetView: NSView {
         ctx.translateBy(x: tip.x, y: tip.y)
         ctx.rotate(by: angle)
         if far { ctx.scaleBy(x: -1, y: 1) }
-        ctx.interpolationQuality = skin.isDrawn ? .high : .none
+        ctx.interpolationQuality = .none
         drawImage(paw, CGRect(x: -width / 2, y: -15 + sideScale * 2,
                               width: width, height: height), ctx)
         ctx.restoreGState()

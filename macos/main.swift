@@ -1,6 +1,9 @@
 import AppKit
 import ApplicationServices
-import Carbon
+
+func initialPetScale(_ savedScale: Double) -> Double {
+    savedScale > 0 ? min(2.0, max(0.5, savedScale)) : 0.58
+}
 
 private final class PetPanel: NSPanel {
     override var canBecomeKey: Bool { false }
@@ -18,30 +21,29 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private var eventSource: CFRunLoopSource?
     private var skinID = PetSkin.all[0].id
     private var nickname = ""
-    private var scale = 1.0
+    private var scale = 0.58
     private var clickThrough = false
     private var showLabels = true
-    private var hideForSogou = false
     private var manuallyHidden = false
-    private var sogouActive = false
     private var inputTimer: Timer?
     private var heldModifiers = Set<UInt16>()
     private var countsDirty = false
     private var keyCount: UInt64 = 0
     private var clickCount: UInt64 = 0
+    private let updater = PetUpdateChecker()
     private let peers = LocalPeers()
     private let friends = FriendDesktop()
     private let baseSize = NSSize(width: 310, height: 238.7)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        checkForUpdate()
         skinID = PetSkin.named(defaults.string(forKey: "skin")).id
         nickname = LocalPeers.normalizedNickname(defaults.string(forKey: "nickname") ?? "") ?? ""
         let savedScale = defaults.double(forKey: "scale")
-        scale = savedScale > 0 ? min(2.0, max(0.5, savedScale)) : 1.0
+        scale = initialPetScale(savedScale)
         clickThrough = defaults.bool(forKey: "clickThrough")
         showLabels = defaults.object(forKey: "showKeyLabels") as? Bool ?? true
-        hideForSogou = defaults.object(forKey: "hideForSogou") as? Bool ?? false
         keyCount = min(UInt64(Int64.max), UInt64(defaults.string(forKey: "keyCount") ?? "0") ?? 0)
         clickCount = min(UInt64(Int64.max), UInt64(defaults.string(forKey: "clickCount") ?? "0") ?? 0)
 
@@ -69,10 +71,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         pet.onOpenSettings = { [weak self] in self?.showSettings() }
         window.contentView = pet
         updateVisibility()
-        updateInputSource()
         let inputTimer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            self.updateInputSource()
             self.flushCounts()
             if self.settingsPopover?.isShown == true { self.refreshSettings() }
         }
@@ -204,6 +204,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         if settingsPopover?.isShown == true { return }
         if settingsController == nil {
             let created = PetSettingsViewController()
+            created.onDownloadUpdate = { [weak self] in self?.downloadUpdate() }
             created.onSelectSkin = { [weak self] in self?.applySkin($0) }
             created.onScaleChange = { [weak self] delta in
                 guard let owner = self else { return }
@@ -216,13 +217,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             created.onClickThroughChange = { [weak self] value in
                 guard let self, self.clickThrough != value else { return }
                 self.toggleClickThrough()
-            }
-            created.onHideForSogouChange = { [weak self] value in
-                guard let self = self else { return }
-                self.hideForSogou = value
-                self.defaults.set(value, forKey: "hideForSogou")
-                self.updateVisibility()
-                self.refreshSettings()
             }
             created.onShareActivityChange = { [weak self] value in
                 self?.peers.shareActivity = value
@@ -266,6 +260,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             settingsPopover = popover
         }
         guard let controller = settingsController else { return }
+        checkForUpdate()
+        controller.setUpdateAvailable(updater.downloadURL != nil)
         refreshSettings()
         let source: NSView = anchor ?? pet
         settingsPopover?.show(relativeTo: source.bounds, of: source, preferredEdge: anchor == nil ? .maxY : .minY)
@@ -273,10 +269,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             popoverWindow.makeFirstResponder(controller.view)
         }
     }
+    private func checkForUpdate() {
+        updater.check { [weak self] in
+            guard let self = self else { return }
+            self.settingsController?.setUpdateAvailable(self.updater.downloadURL != nil)
+        }
+    }
+    private func downloadUpdate() {
+        guard let url = updater.downloadURL else { return }
+        NSWorkspace.shared.open(url)
+    }
     private func refreshSettings() {
         let rows = peers.peers.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
         settingsController?.refresh(skinID: skinID, scale: scale, showLabels: showLabels, clickThrough: clickThrough,
-                                    hideForSogou: hideForSogou, networking: peers.active,
+                                    networking: peers.active,
                                     keys: keyCount, clicks: clickCount, peers: rows, networkStatus: peers.status,
                                     roomCode: peers.roomCode, roomConnected: peers.roomConnected, nickname: nickname, shareActivity: peers.shareActivity)
     }
@@ -295,20 +301,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         updateVisibility()
     }
     private func updateVisibility() {
-        let shouldShow = !manuallyHidden && !(hideForSogou && sogouActive)
+        let shouldShow = !manuallyHidden
         if shouldShow && !window.isVisible { window.orderFrontRegardless() }
         else if !shouldShow && window.isVisible { window.orderOut(nil) }
         updateFriends()
-    }
-    private func updateInputSource() {
-        guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return }
-        func property(_ key: CFString) -> String {
-            guard let raw = TISGetInputSourceProperty(source, key) else { return "" }
-            return Unmanaged<CFString>.fromOpaque(raw).takeUnretainedValue() as String
-        }
-        let value = (property(kTISPropertyInputSourceID) + " " + property(kTISPropertyLocalizedName)).lowercased()
-        sogouActive = value.contains("sogou") || value.contains("sougou") || value.contains("搜狗")
-        updateVisibility()
     }
     @objc private func requestInputPermission() {
         if CGRequestListenEventAccess() { startEventTap() } else { openInputSettings() }

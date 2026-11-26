@@ -35,10 +35,8 @@ namespace WheekKeys
         private readonly Dictionary<string, Button> deskSkinButtons = new Dictionary<string, Button>();
         private readonly UniformGrid skinGrid = new UniformGrid { Columns = 3, Rows = 0, Margin = new Thickness(-2, 2, -2, -2) };
         private readonly TextBlock importStatus = Label(10.5, Muted), updateStatus = Label(10.5, Muted);
-        private readonly TextBlock updateTitle = Label(12, Ink);
         private readonly DispatcherTimer deactivateTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
-        private Border updateBanner;
-        private Button checkUpdates, installUpdate;
+        private Button installUpdate;
         private readonly TextBlock sizeValue;
         private bool closing, showingImportDialog;
 
@@ -70,15 +68,10 @@ namespace WheekKeys
             layout.Children.Add(header);
 
             StackPanel body = new StackPanel { Margin = new Thickness(0, 4, 0, 4) };
-            body.Children.Add(BuildUpdates());
-            body.Children.Add(BuildSkins());
-            body.Children.Add(BuildDeskSkins());
-
-            StackPanel sizeSection = BuildSection("大小");
-            Grid sizeRow = new Grid { Margin = new Thickness(0, 3, 0, 0) };
-            sizeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            sizeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            StackPanel sizeButtons = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            StackPanel sizeButtons = new StackPanel { Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(1, 0, 0, 6) };
+            sizeButtons.Children.Add(new TextBlock { Text = "大小", FontSize = 10.5, FontWeight = FontWeights.SemiBold,
+                Foreground = Muted, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) });
             Button decrease = MakeButton(new TextBlock { Text = "−", FontSize = 17, Margin = new Thickness(0, -3, 0, 0) }, Paper2, Ink, 28, 28);
             AutomationProperties.SetAutomationId(decrease, "size-decrease");
             AutomationProperties.SetName(decrease, "缩小");
@@ -93,10 +86,9 @@ namespace WheekKeys
             sizeButtons.Children.Add(decrease);
             sizeButtons.Children.Add(sizeValue);
             sizeButtons.Children.Add(increase);
-            Grid.SetColumn(sizeButtons, 1);
-            sizeRow.Children.Add(sizeButtons);
-            sizeSection.Children.Add(sizeRow);
-            body.Children.Add(sizeSection);
+            body.Children.Add(sizeButtons);
+            body.Children.Add(BuildSkins());
+            body.Children.Add(BuildDeskSkins());
 
             StackPanel toggles = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
             ToggleButton labels = MakeSwitch(owner.LabelsVisible, delegate(bool value) { owner.SetLabels(value); });
@@ -107,9 +99,6 @@ namespace WheekKeys
             AutomationProperties.SetName(passthrough, "鼠标穿透");
             toggles.Children.Add(BuildToggleRow("按键气泡", labels));
             toggles.Children.Add(BuildToggleRow("鼠标穿透", passthrough));
-            ToggleButton sogou = MakeSwitch(owner.HideForSogou, owner.SetHideForSogou);
-            AutomationProperties.SetName(sogou, "使用搜狗输入法时自动隐藏");
-            toggles.Children.Add(BuildToggleRow("使用搜狗输入法时自动隐藏", sogou));
             body.Children.Add(toggles);
 
             ScrollViewer petPage = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -224,11 +213,19 @@ namespace WheekKeys
 
             StackPanel title = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             title.Children.Add(new TextBlock { Text = "豚鼠键盘", FontSize = 15, FontWeight = FontWeights.Bold, Foreground = Ink });
-            TextBlock subtitle = new TextBlock { FontSize = 10, Foreground = Muted, Margin = new Thickness(0, 1, 0, 0) };
+            TextBlock subtitle = new TextBlock { FontSize = 10, Foreground = Muted, VerticalAlignment = VerticalAlignment.Center };
             string version = typeof(PetSettings).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion;
             subtitle.Inlines.Add(new Run("桌宠设置"));
             subtitle.Inlines.Add(new Run("  v" + version) { FontSize = 9, Foreground = Brushes.Gray });
-            title.Children.Add(subtitle);
+            installUpdate = ActionButton("更新到最新版本", SageSoft, async delegate { await owner.InstallUpdateAsync(); });
+            AutomationProperties.SetAutomationId(installUpdate, "install-update");
+            installUpdate.Height = 22;
+            installUpdate.Padding = new Thickness(7, 0, 7, 0);
+            installUpdate.Margin = new Thickness(7, 0, 0, 0);
+            title.Children.Add(new WrapPanel { Margin = new Thickness(0, 2, 0, 0), Children = { subtitle, installUpdate } });
+            updateStatus.Margin = new Thickness(0, 3, 0, 0);
+            updateStatus.TextWrapping = TextWrapping.Wrap;
+            title.Children.Add(updateStatus);
             Grid.SetColumn(title, 1);
             row.Children.Add(title);
 
@@ -331,34 +328,15 @@ namespace WheekKeys
             finally { showingImportDialog = false; }
         }
 
-        private UIElement BuildUpdates()
-        {
-            updateTitle.FontWeight = FontWeights.SemiBold;
-            updateTitle.TextWrapping = TextWrapping.Wrap;
-            updateTitle.VerticalAlignment = VerticalAlignment.Center;
-            installUpdate = ActionButton("一键更新", Paper, async delegate { await owner.InstallUpdateAsync(); });
-            DockPanel.SetDock(installUpdate, Dock.Right);
-            var offer = new DockPanel { Children = { installUpdate, updateTitle } };
-            updateBanner = new Border { Background = SageSoft, CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(8, 4, 5, 4), Margin = new Thickness(0, 0, 0, 3), Child = offer };
-            checkUpdates = ActionButton("检查更新", Paper2, async delegate { await owner.Updater.CheckAsync(true); });
-            checkUpdates.Margin = new Thickness(0, 0, 7, 0);
-            DockPanel.SetDock(checkUpdates, Dock.Left);
-            updateStatus.VerticalAlignment = VerticalAlignment.Center;
-            updateStatus.TextWrapping = TextWrapping.Wrap;
-            return new StackPanel { Margin = new Thickness(0, 0, 0, 5),
-                Children = { updateBanner, new DockPanel { Children = { checkUpdates, updateStatus } } } };
-        }
-
         private void RefreshUpdate()
         {
             AppUpdater updater = owner.Updater;
             AppUpdater.Release latest = updater.Available;
-            updateBanner.Visibility = latest == null ? Visibility.Collapsed : Visibility.Visible;
-            updateTitle.Text = latest == null ? "" : "发现新版本 v" + latest.Version;
-            updateBanner.ToolTip = latest == null ? null : latest.Notes;
+            installUpdate.Visibility = latest == null ? Visibility.Collapsed : Visibility.Visible;
+            installUpdate.IsEnabled = !updater.Busy;
+            installUpdate.ToolTip = latest == null ? null : ("更新到 v" + latest.Version + "\n" + latest.Notes).TrimEnd();
             updateStatus.Text = updater.Status;
-            checkUpdates.IsEnabled = installUpdate.IsEnabled = !updater.Busy;
+            updateStatus.Visibility = string.IsNullOrEmpty(updater.Status) ? Visibility.Collapsed : Visibility.Visible;
         }
 
         private StackPanel BuildSection(string label)
@@ -372,7 +350,7 @@ namespace WheekKeys
         private static UIElement BuildSwatch(PetSkin skin)
         {
             var image = new Image { Source = Portrait(skin), Width = 14, Height = 14, Stretch = Stretch.Uniform };
-            RenderOptions.SetBitmapScalingMode(image, skin.IsDrawn ? BitmapScalingMode.HighQuality : BitmapScalingMode.NearestNeighbor);
+            RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.NearestNeighbor);
             return image;
         }
 

@@ -52,6 +52,7 @@ namespace WheekKeys
 
     internal sealed class PetWindow : Window
     {
+        private const double MinimumPetWidth = 180;
         private const int GwlExStyle = -20;
         private const int WsExTransparent = 0x20;
         private const int WsExToolWindow = 0x80;
@@ -72,7 +73,6 @@ namespace WheekKeys
         private readonly LocalPeers peers = new LocalPeers();
         private readonly DispatcherTimer timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         private readonly DispatcherTimer networkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
-        private readonly DispatcherTimer updateTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         private readonly FriendDesktop friends;
         private readonly WindowPlacement placement;
         private readonly PetWindowOverlay overlay;
@@ -82,7 +82,6 @@ namespace WheekKeys
         private string nickname = "";
         private bool countsDirty;
         private double nextSave;
-        private bool hideForSogou = false;
         private DesktopInput input;
         private bool clickThrough, altHeld;
         private bool ready;
@@ -92,7 +91,7 @@ namespace WheekKeys
         public PetWindow()
         {
             Title = "豚鼠键盘";
-            Width = 310;
+            Width = MinimumPetWidth;
             Height = Width * 308.0 / 400.0;
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
@@ -132,15 +131,10 @@ namespace WheekKeys
             SourceInitialized += OnSourceInitialized;
             Loaded += delegate
             {
-                if (!ready) updateTimer.Start();
+                if (!ready) CheckForUpdates();
                 ready = true;
                 timer.Start();
                 networkTimer.Start();
-            };
-            updateTimer.Tick += async delegate
-            {
-                updateTimer.Stop();
-                await updater.CheckAsync(false);
             };
             networkTimer.Tick += delegate
             {
@@ -161,7 +155,6 @@ namespace WheekKeys
             timer.Tick += delegate
             {
                 double now = clock.Elapsed.TotalSeconds;
-                UpdateVisibility();
                 if (settingsWindow != null) settingsWindow.RefreshActivity();
                 if (countsDirty && now >= nextSave)
                 {
@@ -179,7 +172,6 @@ namespace WheekKeys
             {
                 timer.Stop();
                 networkTimer.Stop();
-                updateTimer.Stop();
                 updater.Cancel();
                 friends.Dispose();
                 peers.Dispose();
@@ -234,13 +226,6 @@ namespace WheekKeys
             if (IsVisible) scene.ClickMouse(right);
         }
 
-        private void UpdateVisibility()
-        {
-            bool hide = hideForSogou && SogouInput.IsActive();
-            if (hide && IsVisible) Hide();
-            else if (!hide && !IsVisible) Show();
-        }
-
         private void ApplyWindowStyles(IntPtr handle)
         {
             int style = GetWindowLong(handle, GwlExStyle) | WsExNoActivate | WsExToolWindow;
@@ -274,6 +259,12 @@ namespace WheekKeys
                 Math.Max(start.Y, Math.Min(top, Math.Max(start.Y, end.Y - settingsWindow.Height))));
             settingsWindow.Show();
             settingsWindow.Activate();
+            CheckForUpdates();
+        }
+
+        private async void CheckForUpdates()
+        {
+            await updater.CheckAsync();
         }
 
         private void OpenSettingsAtCursor()
@@ -292,7 +283,6 @@ namespace WheekKeys
         internal bool LabelsVisible { get { return scene.ShowKeyLabels; } }
         internal bool MouseClickThrough { get { return clickThrough; } }
         internal double PetWidth { get { return Width; } }
-        internal bool HideForSogou { get { return hideForSogou; } }
         internal LocalPeers Network { get { return peers; } }
         internal long KeyCount { get { return keyCount; } }
         internal long ClickCount { get { return clickCount; } }
@@ -324,7 +314,7 @@ namespace WheekKeys
             catch (Exception e)
             {
                 if (!WheekPackLoader.IsPackError(e)) throw;
-                message = "导入失败，请检查外观包和文件权限。";
+                message = "导入失败，请确认是像素外观包，并检查文件权限。";
             }
             if (settingsWindow != null) settingsWindow.SkinImported(message);
             if (settingsWindow == null || !settingsWindow.IsActive) overlay.Show(message);
@@ -349,13 +339,6 @@ namespace WheekKeys
             error = null;
             peers.RefreshState();
             return true;
-        }
-
-        internal void SetHideForSogou(bool value)
-        {
-            hideForSogou = value;
-            UpdateVisibility();
-            SaveSettings();
         }
 
         internal void SetNetworking(bool value)
@@ -401,7 +384,7 @@ namespace WheekKeys
 
         internal void SetWidth(double width)
         {
-            width = Math.Max(180, Math.Min(600, width));
+            width = Math.Max(MinimumPetWidth, Math.Min(600, width));
             placement.Resize(width, width * 308.0 / 400.0);
             SaveSettings();
         }
@@ -489,15 +472,13 @@ namespace WheekKeys
                     !bool.TryParse(values[3], out labels) || !bool.TryParse(values[4], out through) ||
                     double.IsNaN(left) || double.IsInfinity(left) || double.IsNaN(top) || double.IsInfinity(top) ||
                     double.IsNaN(width) || double.IsInfinity(width)) return;
-                Width = Math.Max(180, Math.Min(600, width));
+                Width = Math.Max(MinimumPetWidth, Math.Min(600, width));
                 Height = Width * 308.0 / 400.0;
                 Left = left;
                 Top = top;
                 scene.ShowKeyLabels = labels;
                 clickThrough = through;
                 scene.Skin = PetSkin.FromId(values.Length > 5 ? values[5] : null);
-                bool hide;
-                if (values.Length > 6 && bool.TryParse(values[6], out hide)) hideForSogou = hide;
                 if (values.Length > 7) LocalPeers.TryCount(values[7], out keyCount);
                 if (values.Length > 8) LocalPeers.TryCount(values[8], out clickCount);
                 string loadedName;
@@ -520,7 +501,8 @@ namespace WheekKeys
                 File.WriteAllLines(pending, new string[] {
                     Left.ToString("R", CultureInfo.InvariantCulture), Top.ToString("R", CultureInfo.InvariantCulture),
                     Width.ToString("R", CultureInfo.InvariantCulture), scene.ShowKeyLabels.ToString(), clickThrough.ToString(), scene.Skin.Id,
-                    hideForSogou.ToString(), keyCount.ToString(CultureInfo.InvariantCulture), clickCount.ToString(CultureInfo.InvariantCulture), nickname,
+                    // Preserve the old setting's slot so the following fields keep their positions.
+                    bool.FalseString, keyCount.ToString(CultureInfo.InvariantCulture), clickCount.ToString(CultureInfo.InvariantCulture), nickname,
                     placement.IsDockedToTaskbar.ToString(), scene.Desk.Id });
                 if (File.Exists(settingsPath)) File.Replace(pending, settingsPath, null);
                 else File.Move(pending, settingsPath);

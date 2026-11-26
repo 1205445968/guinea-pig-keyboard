@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Reflection;
 using System.Windows;
@@ -17,17 +18,19 @@ internal static class PixelSkinSmokeTest
     {
         if (args.Length != 1) { Console.Error.WriteLine("Usage: PixelSkinSmokeTest.exe WheekKeys.exe"); return 2; }
         string exe = Path.GetFullPath(args[0]);
-        string profile = Path.Combine(Path.GetTempPath(), "wheek-014-ui-check-" + Guid.NewGuid().ToString("N") + ".txt");
+        string profileDirectory = Path.Combine(Path.GetTempPath(), "wheek-ui-check-" + Guid.NewGuid().ToString("N"));
+        string profile = Path.Combine(profileDirectory, "settings.txt");
         Assembly assembly = Assembly.LoadFile(exe);
         Type windowType = assembly.GetType("WheekKeys.PetWindow", true);
         Type skinType = assembly.GetType("WheekKeys.PetSkin", true);
+        windowType.GetField("DataDirectory", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, profileDirectory);
         object owner = Activator.CreateInstance(windowType, true);
         Window settings = null;
         try
         {
-            FieldInfo pathField = windowType.GetField("settingsPath", BindingFlags.Instance | BindingFlags.NonPublic);
-            pathField.SetValue(owner, profile);
-            File.WriteAllLines(profile, new[] { "111", "222", "330", "False", "True", "gold-white", "False", "12345", "6789", "测试豚鼠" });
+            Check(((Window)owner).Width == 180, "fresh profile starts at 58 percent");
+            Directory.CreateDirectory(profileDirectory);
+            File.WriteAllLines(profile, new[] { "111", "222", "330", "False", "True", "gold-white", "True", "12345", "6789", "测试豚鼠" });
             MethodInfo restore = windowType.GetMethod("RestoreSettings", BindingFlags.Instance | BindingFlags.NonPublic);
             restore.Invoke(owner, null);
             Check(Convert.ToDouble(windowType.GetProperty("Left").GetValue(owner, null)) == 111, "left");
@@ -42,13 +45,13 @@ internal static class PixelSkinSmokeTest
             FieldInfo ready = windowType.GetField("ready", BindingFlags.Instance | BindingFlags.NonPublic);
             ready.SetValue(owner, true);
             settings = (Window)Activator.CreateInstance(assembly.GetType("WheekKeys.PetSettings", true), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new[] { owner }, null);
-            CheckSettingsLabels(settings, assembly);
+            CheckSettingsLabels(settings, assembly, owner);
             FieldInfo buttonsField = settings.GetType().GetField("skinButtons", BindingFlags.Instance | BindingFlags.NonPublic);
             IDictionary buttons = (IDictionary)buttonsField.GetValue(settings);
             object restoredSkin = windowType.GetProperty("ActiveSkin", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(owner, null);
             Check((string)skinType.GetField("Id").GetValue(restoredSkin) == "pixel-golden-white", "legacy profile migrated");
             Check(buttons.Keys.Cast<string>().Count(id => id.StartsWith("pixel-", StringComparison.Ordinal)) == 14, "pixel skin button count");
-            Check(buttons.Keys.Cast<string>().Count(id => id.StartsWith("drawn-", StringComparison.Ordinal)) == 6, "drawn skin button count");
+            Check(buttons.Count == 14, "only pixel skin buttons");
             foreach (DictionaryEntry entry in buttons)
             {
                 Button button = (Button)entry.Value;
@@ -60,22 +63,42 @@ internal static class PixelSkinSmokeTest
                 Check(lines.Length >= 10 && lines[5] == activeId, "saved skin " + entry.Key);
                 Check(lines[0] == "111" && lines[1] == "222" && lines[2] == "330" && lines[3] == "False" && lines[4] == "True" && lines[6] == "False" && lines[7] == "12345" && lines[8] == "6789" && lines[9] == "测试豚鼠", "preserved profile " + entry.Key);
             }
+            IDictionary desks = (IDictionary)Field(settings, "deskSkinButtons");
+            Check(desks.Count == 3, "three pixel desk skins");
+            foreach (string id in new[] { "meadow", "peach", "mocha" })
+            {
+                Check(desks.Contains(id), "desk button " + id);
+                ((Button)desks[id]).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                object activeDesk = windowType.GetProperty("ActiveDeskSkin", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(owner, null);
+                Check((string)activeDesk.GetType().GetField("Id").GetValue(activeDesk) == id, "selected desk " + id);
+                Check(File.ReadAllLines(profile)[11] == id, "saved desk " + id);
+            }
             MethodInfo fromId = skinType.GetMethod("FromId", BindingFlags.Static | BindingFlags.Public);
             object oldAlias = fromId.Invoke(null, new object[] { "longhair-buff" });
             Check((string)skinType.GetField("Id").GetValue(oldAlias) == "pixel-longhair-buff", "old alias");
             object fallback = fromId.Invoke(null, new object[] { "unknown-skin-id" });
             Check((string)skinType.GetField("Id").GetValue(fallback) == "pixel-tricolor", "unknown fallback");
             Check((string)skinType.GetField("Id").GetValue(fromId.Invoke(null, new object[] { null })) == "pixel-tricolor", "first launch selects pixel tricolor");
-            ((Button)buttons["drawn-tricolor"]).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            object scene = Field(owner, "scene");
-            scene.GetType().GetProperty("Skin").SetValue(scene, fallback, null);
-            ready.SetValue(owner, false);
-            restore.Invoke(owner, null);
-            object restored = scene.GetType().GetProperty("Skin").GetValue(scene, null);
-            Check((string)skinType.GetField("Id").GetValue(restored) == "drawn-tricolor", "saved drawn appearance restores");
+            string[] legacyIds = { "tricolor", "californian", "gold-white", "teddy", "silver-agouti", "longhair" };
+            foreach (string legacyId in legacyIds)
+            {
+                string[] lines = File.ReadAllLines(profile);
+                lines[5] = "drawn-" + legacyId;
+                lines[6] = "True";
+                File.WriteAllLines(profile, lines);
+                ready.SetValue(owner, false);
+                restore.Invoke(owner, null);
+                object restored = windowType.GetProperty("ActiveSkin", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(owner, null);
+                object expected = fromId.Invoke(null, new object[] { legacyId });
+                Check((string)skinType.GetField("Id").GetValue(restored) == (string)skinType.GetField("Id").GetValue(expected), "old drawn profile " + legacyId);
+                Check(Convert.ToInt64(windowType.GetProperty("KeyCount", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).GetValue(owner, null)) == 12345
+                    && Convert.ToInt64(windowType.GetProperty("ClickCount", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).GetValue(owner, null)) == 6789
+                    && (string)windowType.GetProperty("Nickname", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).GetValue(owner, null) == "测试豚鼠", "legacy placeholder keeps subsequent fields aligned");
+            }
+            CheckPacks(assembly);
             CheckRenderLifecycle(assembly);
             CheckNetworkCompatibility(assembly);
-            Console.WriteLine("PASS: settings labels and roundtrips, 14 pixel and 6 drawn skin buttons, wheel animation, render lifecycle, legacy aliases, peer names and counters");
+            Console.WriteLine("PASS: settings labels and roundtrips, 14 pixel skin buttons, wheel animation, render lifecycle, legacy aliases, peer names and counters");
             return 0;
         }
         catch (Exception ex)
@@ -90,6 +113,7 @@ internal static class PixelSkinSmokeTest
             ready.SetValue(owner, false);
             ((Window)owner).Close();
             if (File.Exists(profile)) File.Delete(profile);
+            if (Directory.Exists(profileDirectory)) Directory.Delete(profileDirectory);
             Dispatcher.CurrentDispatcher.InvokeShutdown();
         }
     }
@@ -99,11 +123,9 @@ internal static class PixelSkinSmokeTest
         if (!condition) throw new InvalidOperationException("Check failed: " + label);
     }
 
-    private static void CheckSettingsLabels(Window settings, Assembly app)
+    private static void CheckSettingsLabels(Window settings, Assembly app, object owner)
     {
-        var layout = (Grid)((Border)settings.Content).Child;
-        var header = (Grid)((StackPanel)layout.Children[0]).Children[0];
-        var subtitle = (TextBlock)((StackPanel)header.Children[1]).Children[1];
+        var subtitle = LogicalElements(settings).OfType<TextBlock>().First(element => element.Inlines.OfType<Run>().Any(run => run.Text == "桌宠设置"));
         string version = app.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion;
         Run[] labels = subtitle.Inlines.OfType<Run>().ToArray();
         Check(labels.Length == 2 && labels[0].Text == "桌宠设置", "settings header text");
@@ -111,9 +133,62 @@ internal static class PixelSkinSmokeTest
         Check(versionLabel.Text.Trim() == "v" + version, "settings label uses the product version");
         Check(versionLabel.FontSize < subtitle.FontSize && ((SolidColorBrush)versionLabel.Foreground).Color == Colors.Gray,
             "settings version label appears in smaller gray text");
+        Button update = LogicalElements(settings).OfType<Button>().Single(button => System.Windows.Automation.AutomationProperties.GetAutomationId(button) == "install-update");
+        Check(update.Visibility == Visibility.Collapsed, "update button hidden initially");
+        Check(Object.ReferenceEquals(LogicalTreeHelper.GetParent(subtitle), LogicalTreeHelper.GetParent(update)), "update button shares subtitle row");
+        Check(ButtonText(update) == "更新到最新版本", "fixed update button text");
+        Check(!LogicalElements(settings).OfType<Button>().Any(button => ButtonText(button) == "检查更新"), "no manual update check button");
+        Button decrease = LogicalElements(settings).OfType<Button>().Single(button => System.Windows.Automation.AutomationProperties.GetAutomationId(button) == "size-decrease");
+        var sizeRow = LogicalTreeHelper.GetParent(decrease) as StackPanel;
+        Check(sizeRow != null && sizeRow.Orientation == Orientation.Horizontal && sizeRow.HorizontalAlignment == HorizontalAlignment.Left, "size controls left aligned");
+        object updater = owner.GetType().GetProperty("Updater", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(owner, null);
+        Type updaterType = updater.GetType();
+        Type releaseType = updaterType.GetNestedType("Release", BindingFlags.NonPublic);
+        object release = Activator.CreateInstance(releaseType, true);
+        releaseType.GetField("Version", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(release, "99.12.34");
+        PropertyInfo available = updaterType.GetProperty("Available", BindingFlags.Instance | BindingFlags.NonPublic);
+        Action changed = (Action)updaterType.GetField("Changed", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(updater);
+        available.SetValue(updater, release, null);
+        changed();
+        Check(update.Visibility == Visibility.Visible && ButtonText(update) == "更新到最新版本" && Convert.ToString(update.ToolTip).Contains("99.12.34"), "available release shows button and target version");
+        available.SetValue(updater, null, null);
+        changed();
+        Check(update.Visibility == Visibility.Collapsed, "update button hidden after release removed");
+        Check(!LogicalText(settings).Any(text => text.Contains("搜狗")), "no Sogou hiding setting");
         var network = (DockPanel)Field(settings, "networkPage");
         var controls = (StackPanel)network.Children[0];
         Check(!controls.Children.OfType<TextBlock>().Any(label => label.Text.Contains("联机时会共享具体按键")), "removed network paragraph");
+    }
+
+    private static string ButtonText(Button button)
+    {
+        TextBlock content = button.Content as TextBlock;
+        return content == null ? Convert.ToString(button.Content) : content.Text;
+    }
+
+    private static System.Collections.Generic.IEnumerable<DependencyObject> LogicalElements(DependencyObject root)
+    {
+        yield return root;
+        foreach (object child in LogicalTreeHelper.GetChildren(root))
+        {
+            DependencyObject element = child as DependencyObject;
+            if (element != null)
+                foreach (DependencyObject value in LogicalElements(element)) yield return value;
+        }
+    }
+
+    private static System.Collections.Generic.IEnumerable<string> LogicalText(DependencyObject root)
+    {
+        TextBlock text = root as TextBlock;
+        if (text != null) yield return text.Text ?? "";
+        string name = System.Windows.Automation.AutomationProperties.GetName(root);
+        if (!String.IsNullOrEmpty(name)) yield return name;
+        foreach (object child in LogicalTreeHelper.GetChildren(root))
+        {
+            DependencyObject element = child as DependencyObject;
+            if (element != null)
+                foreach (string value in LogicalText(element)) yield return value;
+        }
     }
 
     private static object Field(object value, string name)
@@ -126,6 +201,34 @@ internal static class PixelSkinSmokeTest
         var frame = new DispatcherFrame();
         Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.Background, new Action(delegate { frame.Continue = false; }));
         Dispatcher.PushFrame(frame);
+    }
+
+    private static void CheckPacks(Assembly assembly)
+    {
+        MethodInfo read = assembly.GetType("WheekKeys.WheekPackLoader", true).GetMethod("Read", BindingFlags.Static | BindingFlags.NonPublic);
+        foreach (string mode in new[] { "pixel", "drawn" })
+        {
+            byte[] data;
+            using (var stream = new MemoryStream())
+            {
+                using (var zip = new ZipArchive(stream, ZipArchiveMode.Create, true))
+                using (var writer = new StreamWriter(zip.CreateEntry("manifest.json").Open()))
+                    writer.Write("{\"id\":\"smoke\",\"name\":\"Smoke\",\"mode\":\"" + mode + "\"}");
+                data = stream.ToArray();
+            }
+            if (mode == "pixel")
+            {
+                object skin = read.Invoke(null, new object[] { data });
+                Check((string)skin.GetType().GetField("Id").GetValue(skin) == "wheek-smoke", "pixel pack loads");
+            }
+            else
+            {
+                bool rejected = false;
+                try { read.Invoke(null, new object[] { data }); }
+                catch (TargetInvocationException error) { rejected = error.InnerException is InvalidDataException; }
+                Check(rejected, "drawn pack rejected");
+            }
+        }
     }
 
     private static void CheckRenderLifecycle(Assembly assembly)
@@ -158,40 +261,11 @@ internal static class PixelSkinSmokeTest
             Check((bool)Field(scene, "rightButton"), "pixel click forwarding");
             sceneType.GetProperty("ShowKeyLabels").SetValue(scene, false, null);
             Check(!(bool)scene.GetType().GetProperty("ShowKeyLabels").GetValue(scene, null), "label forwarding");
-            CheckDrawnDesk(scene, skinType);
             host.RootVisual = null;
             Pump();
             Check(!((DispatcherTimer)Field(scene, "gaze")).IsEnabled
                 && !((DispatcherTimer)Field(scene, "animation")).IsEnabled, "detached timers stopped");
         }
-    }
-
-    private static void CheckDrawnDesk(FrameworkElement scene, Type skinType)
-    {
-        Type type = scene.GetType();
-        var skin = type.GetProperty("Skin");
-        object pixel = skin.GetValue(scene, null);
-        skin.SetValue(scene, skinType.GetMethod("FromId").Invoke(null, new object[] { "drawn-silver-agouti" }), null);
-        const BindingFlags instance = BindingFlags.NonPublic | BindingFlags.Instance;
-        var poseAt = type.GetMethod("DrawnPose", instance);
-        object rest = poseAt.Invoke(scene, new object[] { 0.0 });
-        Type pose = rest.GetType();
-        Rect body = (Rect)pose.GetField("Body").GetValue(rest);
-        Check(body == new Rect(135, 123, 129, 85), "手绘身体恢复原尺寸与位置");
-        type.GetField("mouseGrip", instance).SetValue(scene, 1.0);
-        object held = poseAt.Invoke(scene, new object[] { 0.0 });
-        Rect leaning = (Rect)pose.GetField("Body").GetValue(held);
-        Point near = (Point)pose.GetField("LeftTip").GetValue(held);
-        Point far = (Point)pose.GetField("RightTip").GetValue(held);
-        Check(leaning.Left == 66 && near == new Point(79.5, 236.5) && far == new Point(153, 227),
-            "握鼠时身体靠近鼠标，另一只前爪撑在键盘边");
-        type.GetMethod("PressKey").Invoke(scene, new object[] { 0x38 });
-        object hand = Field(scene, "right");
-        Point alt = (Point)hand.GetType().GetField("Target").GetValue(hand);
-        Check(alt == new Point(281.742, 209.608), "左 Alt 落在手绘键帽中心");
-        skin.SetValue(scene, pixel, null);
-        Check((Point)Field(scene, "mousePosition") == new Point(31, 243) && (double)Field(scene, "mouseGrip") == 0,
-            "切回像素外观后使用对应的鼠标位置");
     }
 
     private static void CheckDozing(FrameworkElement scene)
@@ -285,6 +359,16 @@ internal static class PixelSkinSmokeTest
                 && (long)member.GetType().GetField("Clicks").GetValue(member) == 6789, "peer counters");
             object peerSkin = member.GetType().GetField("Skin").GetValue(member);
             Check((string)skinType.GetField("Id").GetValue(peerSkin) == "pixel-longhair-gold-white", "legacy peer skin mapped");
+            foreach (string legacyId in nativeIds)
+            {
+                read.Invoke(peer, new object[] { "WS1|" + session + "|drawn-" + legacyId + "|1", 10.1 });
+                object actual = member.GetType().GetField("Skin").GetValue(member);
+                object expected = skinType.GetMethod("FromId").Invoke(null, new object[] { legacyId });
+                Check((string)skinType.GetField("Id").GetValue(actual) == (string)skinType.GetField("Id").GetValue(expected), "old drawn peer " + legacyId);
+            }
+            object beforeUnknown = member.GetType().GetField("Skin").GetValue(member);
+            read.Invoke(peer, new object[] { "WS1|" + session + "|drawn-unknown|1", 10.4 });
+            Check(Object.ReferenceEquals(beforeUnknown, member.GetType().GetField("Skin").GetValue(member)), "unknown appearance ignored");
             read.Invoke(peer, new object[] { "WK1|" + session + "|unknown|0|0", 10.5 });
             Check((long)member.GetType().GetField("Keys").GetValue(member) == 12345, "unknown skin packet ignored");
             string encoded = (string)assembly.GetType("WheekKeys.PetName").GetMethod("Encode").Invoke(null, new object[] { "测试豚鼠" });

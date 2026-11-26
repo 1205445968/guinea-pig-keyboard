@@ -116,15 +116,14 @@ namespace WheekKeys
                 if (id == null || !Regex.IsMatch(id, @"\A[a-zA-Z0-9-]+\z") || string.IsNullOrWhiteSpace(name))
                     throw new InvalidDataException("外观包需要合法的 id 和非空的 name。");
                 string mode = Field(fields, "mode", 8) ?? "pixel";
-                if (mode != "pixel" && mode != "drawn") throw new InvalidDataException("外观包的 mode 必须为 pixel 或 drawn。");
-                PetSkin skin = PetSkin.CreateCustom(id.ToLowerInvariant(), name.Trim(), mode == "drawn", Field(fields, "baseCoat", 64));
+                if (mode != "pixel") throw new InvalidDataException("仅支持像素外观包。");
+                PetSkin skin = PetSkin.CreateCustom(id.ToLowerInvariant(), name.Trim(), Field(fields, "baseCoat", 64));
                 skin.Author = Field(fields, "author", 80);
                 skin.CustomFurColor = ReadColor(fields, "furColor");
                 skin.CustomInkColor = ReadColor(fields, "inkColor");
                 skin.CustomEyeColor = ReadColor(fields, "eyeColor");
                 skin.CustomBody = ReadImage(entries, "body.png");
                 skin.CustomPaw = ReadImage(entries, "paw.png");
-                skin.CustomEyes = ReadImage(entries, "eyes.png");
                 skin.CustomMouth = ReadImage(entries, "mouth.png");
                 return skin;
             }

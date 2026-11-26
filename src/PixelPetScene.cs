@@ -27,7 +27,6 @@ namespace WheekKeys
         private readonly Dictionary<string, EyeArt> coatEyes = new Dictionary<string, EyeArt>();
         private readonly Dictionary<string, BitmapSource> coatPaws = new Dictionary<string, BitmapSource>();
         private EyeArt Eyes;
-        private DrawnPetArt drawnArt;
         private BitmapSource Paw;
         private Brush ForelegFill;
         private Brush ForelegEdge;
@@ -122,6 +121,16 @@ namespace WheekKeys
             };
         }
 
+        private void ResetDeskPose()
+        {
+            left = new Stroke(new Point(183, 201));
+            right = new Stroke(new Point(239, 202));
+            mousePosition = mouseDestination = new Point(31, 243);
+            mouseGrip = 0;
+            lastMouseUse = lastClick = lastScroll = double.NegativeInfinity;
+            gazeOffset = headOffset = new Vector();
+        }
+
         private void ScheduleBlink(double now)
         {
             nextBlink = now + 3000 + blinkRandom.Next(3001);
@@ -135,7 +144,6 @@ namespace WheekKeys
             if (active)
             {
                 gazeOffset = new Vector();
-                cursorLookFrame = 0;
                 AdvanceHead();
                 InvalidateVisual();
             }
@@ -188,8 +196,7 @@ namespace WheekKeys
             }
             double age = now - blinkStarted;
             int frame = 0;
-            if (drawnArt != null) frame = BlinkFrame(age);
-            else if (age < 40) frame = 1;
+            if (age < 40) frame = 1;
             else if (age < 120) frame = 2;
             else if (age < BlinkDuration) frame = 1;
             if (frame == blinkFrame) return;
@@ -208,11 +215,6 @@ namespace WheekKeys
         public void LookAt(Point cursor)
         {
             cursor -= new Vector(SceneOffsetX, 0);
-            if (drawnArt != null)
-            {
-                UpdateDrawnCursorGaze(cursor);
-                return;
-            }
             Vector offset = Eyes.Offset(cursor, bodyBounds);
             if (offset == gazeOffset) return;
             gazeOffset = offset;
@@ -252,11 +254,10 @@ namespace WheekKeys
             set
             {
                 if (value == null || value == skin) return;
-                if (skin == null || skin.IsDrawn != value.IsDrawn) ResetDeskPose(value.IsDrawn);
-                drawnArt = value.IsDrawn ? DrawnPetArt.For(value) : null;
-                if (!value.IsDrawn) ApplyPixelSkin(value);
-                RenderOptions.SetBitmapScalingMode(this, value.IsDrawn ? BitmapScalingMode.HighQuality : BitmapScalingMode.NearestNeighbor);
-                RenderOptions.SetEdgeMode(this, value.IsDrawn ? EdgeMode.Unspecified : EdgeMode.Aliased);
+                if (skin == null) ResetDeskPose();
+                ApplyPixelSkin(value);
+                RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.NearestNeighbor);
+                RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
                 skin = value;
                 mouth.Reset(clock.Elapsed.TotalMilliseconds);
                 settlingMouse = pendingMouseClick = false;
@@ -271,7 +272,6 @@ namespace WheekKeys
             coatEyes.Remove(skinId);
             coatPaws.Remove(skinId);
             Portraits.Remove(skinId);
-            DrawnPetArt.Invalidate(skinId);
             if (skin != null && skin.Id == skinId)
             {
                 PetSkin reloaded = PetSkin.FromId(skinId);
@@ -319,7 +319,6 @@ namespace WheekKeys
 
         internal static ImageSource Portrait(PetSkin skin)
         {
-            if (skin.IsDrawn) return DrawnPetArt.For(skin).Portrait;
             CoatArt coat = CoatArt.Find(skin.PixelCoatId);
             string cacheKey = skin.IsCustom ? skin.Id : coat.Id;
             ImageSource cached;
@@ -346,7 +345,6 @@ namespace WheekKeys
         public void PressKey(int scan)
         {
             RecordActivity();
-            if (drawnArt != null) { PressDrawnKey(scan); return; }
             bool onRight = PixelKeyboardArt.IsRight(scan);
             Stroke hand = onRight ? left : right;
             double now = clock.Elapsed.TotalMilliseconds;
@@ -369,12 +367,8 @@ namespace WheekKeys
         {
             if (dx == 0 && dy == 0) return;
             RecordActivity();
-            if (drawnArt != null) MoveDrawnMouse(dx, dy, clock.Elapsed.TotalMilliseconds);
-            else
-            {
-                mouseDestination.X = Math.Max(10, Math.Min(46, mouseDestination.X + dx * 0.12));
-                mouseDestination.Y = Math.Max(210, Math.Min(270, mouseDestination.Y + dy * 0.12));
-            }
+            mouseDestination.X = Math.Max(10, Math.Min(46, mouseDestination.X + dx * 0.12));
+            mouseDestination.Y = Math.Max(210, Math.Min(270, mouseDestination.Y + dy * 0.12));
             lastMouseUse = clock.Elapsed.TotalMilliseconds;
             double readiness = sleep.MotionReadiness(lastMouseUse);
             if (readiness < 0.999) slowMouseUntil = Math.Max(slowMouseUntil, lastMouseUse + 2400 * (1 - readiness));
@@ -394,7 +388,7 @@ namespace WheekKeys
                 settlingMouse = pendingMouseClick = true;
                 lastClick = double.NegativeInfinity;
             }
-            else { pendingMouseClick = false; lastClick = lastMouseUse + (drawnArt == null ? 0 : (1 - mouseGrip) * 110); }
+            else { pendingMouseClick = false; lastClick = lastMouseUse; }
             Wake();
         }
 
@@ -425,11 +419,6 @@ namespace WheekKeys
             double elapsed = Math.Max(0, now - lastFrame);
             lastFrame = now;
             double readiness = sleep.MotionReadiness(now);
-            if (drawnArt != null && !settlingMouse && !pendingMouseClick && now >= slowMouseUntil)
-            {
-                AdvanceDrawnMouse(now, elapsed);
-                return;
-            }
             mousePosition += (mouseDestination - mousePosition) * (1 - Math.Exp(-elapsed * readiness / (32 + (1 - readiness) * 170)));
             if ((mouseDestination - mousePosition).LengthSquared < 0.01) mousePosition = mouseDestination;
 
@@ -501,13 +490,6 @@ namespace WheekKeys
                 return result;
             }
 
-            public double DrawnRestWeight(double now)
-            {
-                if (!Active) return 1;
-                double age = Math.Max(0, now - Started);
-                return Smooth(Math.Max(0, Math.Min(1, (age - 102) / (SettleTime - 102))));
-            }
-
             public double BodyAttachment(double now)
             {
                 if (!Active) return 1;
@@ -565,7 +547,6 @@ namespace WheekKeys
         protected override void OnRender(DrawingContext dc)
         {
             double now = clock.Elapsed.TotalMilliseconds;
-            if (drawnArt != null) { RenderDrawn(dc, now); return; }
             Point lp = MouseHand(left.Position(now), now);
             Point rp = right.Position(now);
             double l = left.Contact(now), r = right.Contact(now);

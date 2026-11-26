@@ -26,6 +26,7 @@ namespace WheekKeys
         private readonly string directory;
         private readonly string currentVersion;
         private readonly CancellationTokenSource lifetime = new CancellationTokenSource();
+        private long? lastSuccessfulCheck;
 
         internal sealed class Release
         {
@@ -46,11 +47,12 @@ namespace WheekKeys
             currentVersion = typeof(AppUpdater).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion;
         }
 
-        internal async Task CheckAsync(bool manual)
+        internal async Task CheckAsync()
         {
             if (Busy || lifetime.IsCancellationRequested) return;
+            long now = Stopwatch.GetTimestamp();
+            if (lastSuccessfulCheck.HasValue && (double)(now - lastSuccessfulCheck.Value) / Stopwatch.Frequency < 300) return;
             Busy = true;
-            if (manual) Status = "正在检查更新…";
             Notify();
             try
             {
@@ -61,14 +63,15 @@ namespace WheekKeys
                     if (source == null) throw new InvalidDataException("更新源需要有效的 HTTPS 地址。");
                     string json = await ReadManifestAsync(source, timeout.Token);
                     Release latest = ParseRelease(json);
+                    timeout.Token.ThrowIfCancellationRequested();
                     Available = IsNewer(latest.Version, currentVersion) ? latest : null;
-                    Status = Available == null && manual ? "当前已是最新版本。" : null;
+                    if (Available == null) Status = null;
+                    lastSuccessfulCheck = Stopwatch.GetTimestamp();
                 }
             }
             catch (Exception e)
             {
                 if (!ExpectedError(e)) throw;
-                Status = manual ? "检查更新失败，请稍后重试。" : null;
             }
             finally { Busy = false; Notify(); }
         }

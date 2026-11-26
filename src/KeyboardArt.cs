@@ -3,35 +3,26 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
-using System.Windows;
-using System.Windows.Media;
 
 namespace WheekKeys
 {
     internal static class KeyboardArt
     {
-        private static readonly Rect KeyboardBounds = new Rect(86, 197, 279.84, 86.24);
-
         private sealed class Key
         {
             public int Scan;
             public string Text;
             public bool Right;
-            public Point Center;
-            public double Width;
-            public Key(int scan, string text, bool right, Point center, double width)
+            public Key(int scan, string text, bool right)
             {
                 Scan = scan;
                 Text = text;
                 Right = right;
-                Center = center;
-                Width = width;
             }
         }
 
         private static readonly Key[] Keys = CreateKeys();
         private static readonly Dictionary<int, Key> Lookup = IndexKeys();
-        private static readonly Dictionary<string, DrawingGroup> Artworks = new Dictionary<string, DrawingGroup>();
 
         private static Key[] CreateKeys()
         {
@@ -57,11 +48,7 @@ namespace WheekKeys
                         if (fields[3] == "R") right = true;
                         else if (fields[3] == "L") right = false;
                         else throw new FormatException("手别必须是 L 或 R。");
-                        double x = double.Parse(fields[4], NumberStyles.Float, CultureInfo.InvariantCulture);
-                        double y = double.Parse(fields[5], NumberStyles.Float, CultureInfo.InvariantCulture);
-                        double width = double.Parse(fields[6], NumberStyles.Float, CultureInfo.InvariantCulture);
-                        if (width <= 0) throw new FormatException("键宽必须大于零。");
-                        keys.Add(new Key(scan, fields[2], right, new Point(x, y), width));
+                        keys.Add(new Key(scan, fields[2], right));
                     }
                     catch (Exception ex)
                     {
@@ -79,65 +66,6 @@ namespace WheekKeys
             foreach (Key key in Keys) keys.Add(key.Scan, key);
             keys.Add(0x11c, keys[28]);
             return keys;
-        }
-
-        private static DrawingGroup GetArtwork(DeskSkin desk)
-        {
-            desk = desk ?? DeskSkin.Default;
-            DrawingGroup group;
-            if (!Artworks.TryGetValue(desk.Id, out group))
-            {
-                group = new DrawingGroup();
-                using (DrawingContext dc = group.Open())
-                {
-                    ImageSource bitmap = PixelPetScene.LoadSprite(desk.DrawnKeyboardResource);
-                    dc.DrawImage(bitmap, KeyboardBounds);
-                }
-                group.Freeze();
-                Artworks[desk.Id] = group;
-            }
-            return group;
-        }
-
-        private static void DrawPressed(DrawingContext dc, DeskSkin desk, Key key, double amount)
-        {
-            double width = Math.Max(0, key.Width - 1.5);
-            double height = 7.3;
-            Rect face = new Rect(key.Center.X - width / 2, key.Center.Y - height / 2 + amount * 1.2, width, height);
-            dc.PushTransform(new RotateTransform(-3, key.Center.X, key.Center.Y));
-            dc.PushOpacity(amount);
-            dc.DrawRoundedRectangle(desk.PressGlow, desk.PressLine, face, 2.5, 2.5);
-            dc.Pop();
-            dc.Pop();
-        }
-
-        private static Key FindKey(int scan, bool right)
-        {
-            Key key;
-            return scan != 0 && Lookup.TryGetValue(scan, out key) ? key : Lookup[right ? 36 : 33];
-        }
-
-        private static double Clamp(double amount)
-        {
-            return double.IsNaN(amount) ? 0 : Math.Max(0, Math.Min(1, amount));
-        }
-
-        public static void Draw(DrawingContext dc, int leftScan, double leftAmount, int rightScan, double rightAmount)
-        {
-            Draw(dc, DeskSkin.Default, leftScan, leftAmount, rightScan, rightAmount);
-        }
-
-        public static void Draw(DrawingContext dc, DeskSkin desk, int leftScan, double leftAmount, int rightScan, double rightAmount)
-        {
-            if (dc == null) throw new ArgumentNullException("dc");
-            desk = desk ?? DeskSkin.Default;
-            dc.DrawDrawing(GetArtwork(desk));
-            double left = Clamp(leftAmount);
-            double right = Clamp(rightAmount);
-            Key leftKey = FindKey(leftScan, false);
-            Key rightKey = FindKey(rightScan, true);
-            if (left > 0) DrawPressed(dc, desk, leftKey, leftKey == rightKey ? Math.Max(left, right) : left);
-            if (right > 0 && (rightKey != leftKey || left <= 0)) DrawPressed(dc, desk, rightKey, right);
         }
 
         public static bool IsRight(int scan)
@@ -183,9 +111,5 @@ namespace WheekKeys
             return "";
         }
 
-        public static Point Target(int scan, bool right)
-        {
-            return FindKey(scan, right).Center;
-        }
     }
 }

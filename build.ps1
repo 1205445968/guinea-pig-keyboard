@@ -20,13 +20,7 @@ try {
     }
     $arguments += '/resource:assets/avatar.png,avatar.png'
     $arguments += '/resource:assets/pixel/doze.txt,doze.txt'
-    $arguments += '/resource:assets/keyboard-layout.txt,keyboard-layout.txt', '/resource:assets/keyboard.png,keyboard.png', '/resource:assets/mouse.png,mouse.png'
-    $arguments += '/resource:assets/keyboard-peach.png,keyboard-peach.png', '/resource:assets/mouse-peach.png,mouse-peach.png'
-    $arguments += '/resource:assets/keyboard-mocha.png,keyboard-mocha.png', '/resource:assets/mouse-mocha.png,mouse-mocha.png'
-    $arguments += '/resource:assets/guinea-pig.png,guinea-pig.png', '/resource:assets/paw.png,paw.png'
-    foreach ($asset in Get-ChildItem -LiteralPath 'assets/skins' -Filter '*.png' -File) {
-        $arguments += "/resource:assets/skins/$($asset.Name),$($asset.Name)"
-    }
+    $arguments += '/resource:assets/keyboard-layout.txt,keyboard-layout.txt'
     foreach ($asset in Get-ChildItem -LiteralPath 'assets/pixel' -Filter '*.png' -File) {
         if ($asset.Name.StartsWith('mac-')) { continue }
         $arguments += "/resource:assets/pixel/$($asset.Name),pixel-$($asset.Name)"

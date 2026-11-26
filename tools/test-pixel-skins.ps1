@@ -13,7 +13,7 @@ $null = New-Item -ItemType Directory -Path $scratch
 $testExe = Join-Path $scratch 'PixelSkinSmokeTest.exe'
 try {
     $arguments = @('/nologo', '/codepage:65001', "/out:$testExe", '/reference:System.Core.dll',
-        '/reference:System.Drawing.dll', '/reference:System.Windows.Forms.dll', '/reference:System.Xaml.dll')
+        '/reference:System.IO.Compression.dll', '/reference:System.Drawing.dll', '/reference:System.Windows.Forms.dll', '/reference:System.Xaml.dll')
     foreach ($assembly in 'WindowsBase', 'PresentationCore', 'PresentationFramework') {
         $arguments += '/reference:' + (Join-Path $frameworkDir "WPF/$assembly.dll")
     }

@@ -75,7 +75,7 @@ internal static class FriendDesktopSmokeTest
             grip.SetValue(remote, 0.0); remote.InvalidateVisual(); Pump(friend);
             read.Invoke(network,new object[]{"WS1|"+id+"|drawn-tricolor|1",1.2});
             Call(stage,"Update",network,1.2,false,true); Pump(owner);
-            Check(Field(remote,"drawnArt")!=null,"friend can switch to the drawn appearance");
+            Check((string)Get(remote,"Skin").GetType().GetField("Id").GetValue(Get(remote,"Skin")) == "pixel-tricolor", "legacy drawn friend appearance maps to pixel");
             CheckNameAboveHead(friend, remote, label);
             read.Invoke(network,new object[]{"WA1|"+id+"|1|k30",1.2});
             Call(stage,"Update",network,1.2,true,false); Pump(owner);

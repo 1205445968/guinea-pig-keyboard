@@ -21,13 +21,7 @@ namespace WheekKeys
             new PetSkin("pixel-longhair-buff", "像素长毛浅金棕", "longhair-buff", "longhair"),
             new PetSkin("pixel-longhair-cream", "像素长毛奶油", "longhair-cream", "longhair"),
             new PetSkin("pixel-longhair-chocolate", "像素长毛巧克力", "longhair-chocolate", "longhair"),
-            new PetSkin("pixel-longhair-californian", "像素长毛加州", "longhair-californian", "longhair"),
-            Drawn("tricolor", "手绘三花"),
-            Drawn("californian", "手绘白加州"),
-            Drawn("gold-white", "手绘黄白英短"),
-            Drawn("teddy", "手绘美泰"),
-            Drawn("silver-agouti", "手绘雕灰"),
-            Drawn("longhair", "手绘长毛猪")
+            new PetSkin("pixel-longhair-californian", "像素长毛加州", "longhair-californian", "longhair")
         };
 
         private static readonly SortedDictionary<string, PetSkin> custom = new SortedDictionary<string, PetSkin>(StringComparer.Ordinal);
@@ -38,12 +32,10 @@ namespace WheekKeys
         public readonly string Name;
         public readonly string PixelCoatId;
         public readonly string NetworkId;
-        public bool IsDrawn { get { return PixelCoatId == null; } }
         public bool IsCustom { get { return BaseSkin != null; } }
         public PetSkin BaseSkin { get; private set; }
         public BitmapImage CustomBody { get; internal set; }
         public BitmapImage CustomPaw { get; internal set; }
-        public BitmapImage CustomEyes { get; internal set; }
         public BitmapImage CustomMouth { get; internal set; }
         public Color? CustomFurColor { get; internal set; }
         public Color? CustomInkColor { get; internal set; }
@@ -58,17 +50,10 @@ namespace WheekKeys
             NetworkId = networkId;
         }
 
-        private static PetSkin Drawn(string coatId, string name)
-        {
-            return new PetSkin("drawn-" + coatId, name, null, coatId);
-        }
-
-        internal static PetSkin CreateCustom(string id, string name, bool drawn, string baseCoat)
+        internal static PetSkin CreateCustom(string id, string name, string baseCoat)
         {
             PetSkin basis = Find(baseCoat);
             if (basis == null || basis.IsCustom) basis = All[0];
-            if (basis.IsDrawn != drawn)
-                basis = Find(drawn ? "drawn-" + basis.NetworkId : basis.NetworkId);
             return new PetSkin("wheek-" + id, name, basis.PixelCoatId, basis.NetworkId) { BaseSkin = basis };
         }
 
@@ -90,12 +75,12 @@ namespace WheekKeys
             string replacement = null;
             switch (id)
             {
-                case "tricolor": replacement = "pixel-tricolor"; break;
-                case "californian": replacement = "pixel-californian"; break;
-                case "gold-white": replacement = "pixel-golden-white"; break;
-                case "teddy": replacement = "pixel-chocolate"; break;
-                case "silver-agouti": replacement = "pixel-black-white"; break;
-                case "longhair": replacement = "pixel-longhair-gold-white"; break;
+                case "drawn-tricolor": case "tricolor": replacement = "pixel-tricolor"; break;
+                case "drawn-californian": case "californian": replacement = "pixel-californian"; break;
+                case "drawn-gold-white": case "gold-white": replacement = "pixel-golden-white"; break;
+                case "drawn-teddy": case "teddy": replacement = "pixel-chocolate"; break;
+                case "drawn-silver-agouti": case "silver-agouti": replacement = "pixel-black-white"; break;
+                case "drawn-longhair": case "longhair": replacement = "pixel-longhair-gold-white"; break;
                 case "black-white": replacement = "pixel-black-white"; break;
                 case "golden-white": replacement = "pixel-golden-white"; break;
                 case "white": replacement = "pixel-buff"; break;

@@ -1,12 +1,70 @@
 import AppKit
 
+final class PetUpdateChecker {
+    private struct Release: Decodable {
+        struct Asset: Decodable { let name: String; let browser_download_url: String }
+        let tag_name: String
+        let draft: Bool
+        let prerelease: Bool
+        let assets: [Asset]
+    }
+    private enum InvalidRelease: Error { case version }
+    private let endpoint = URL(string: "https://api.github.com/repos/gwtt/guinea-pig-keyboard/releases/latest")!
+    private var checking = false
+    private var lastSuccess: TimeInterval?
+    private(set) var downloadURL: URL?
+
+    private static func version(_ value: String) -> [Int]? {
+        let value = value.hasPrefix("v") ? String(value.dropFirst()) : value
+        let parts = value.split(separator: ".", omittingEmptySubsequences: false)
+        guard (2...3).contains(parts.count), parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0.isASCII && $0.isNumber } }),
+              parts.allSatisfy({ Int($0) != nil }) else { return nil }
+        return parts.map { Int($0)! } + Array(repeating: 0, count: 3 - parts.count)
+    }
+
+    static func updateURL(data: Data, currentVersion: String) throws -> URL? {
+        let release = try JSONDecoder().decode(Release.self, from: data)
+        guard let current = version(currentVersion), let latest = version(release.tag_name) else { throw InvalidRelease.version }
+        guard !release.draft, !release.prerelease, current.lexicographicallyPrecedes(latest), let asset = release.assets.first(where: { $0.name == "WheekKeys-macOS.zip" }),
+              let url = URL(string: asset.browser_download_url), url.scheme == "https", url.host == "github.com",
+              url.user == nil, url.password == nil, url.port == nil, url.query == nil, url.fragment == nil,
+              url.path == "/gwtt/guinea-pig-keyboard/releases/download/\(release.tag_name)/WheekKeys-macOS.zip" else { return nil }
+        return url
+    }
+
+    func check(completion: @escaping () -> Void) {
+        if checking || lastSuccess.map({ ProcessInfo.processInfo.systemUptime - $0 < 300 }) == true { return }
+        checking = true
+        var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("WheekKeys-macOS", forHTTPHeaderField: "User-Agent")
+        let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self else { return }
+            let result: Result<URL?, Error>
+            if error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data = data {
+                result = Result { try Self.updateURL(data: data, currentVersion: current) }
+            } else {
+                result = .failure(error ?? URLError(.badServerResponse))
+            }
+            DispatchQueue.main.async {
+                self.checking = false
+                if case .success(let url) = result {
+                    self.downloadURL = url
+                    self.lastSuccess = ProcessInfo.processInfo.systemUptime
+                }
+                completion()
+            }
+        }.resume()
+    }
+}
+
 final class PetSettingsViewController: NSViewController {
     var onSelectSkin: ((String) -> Void)?
     var onSaveNickname: ((String) -> Bool)?
     var onScaleChange: ((Double) -> Void)?
     var onShowLabelsChange: ((Bool) -> Void)?
     var onClickThroughChange: ((Bool) -> Void)?
-    var onHideForSogouChange: ((Bool) -> Void)?
     var onShareActivityChange: ((Bool) -> Void)?
     var onNetworkingChange: ((Bool) -> Void)?
     var onCreateRoom: (() -> Void)?
@@ -15,13 +73,14 @@ final class PetSettingsViewController: NSViewController {
     var onReturnToCorner: (() -> Void)?
     var onQuit: (() -> Void)?
     var onClose: (() -> Void)?
+    var onDownloadUpdate: (() -> Void)?
 
     private let skinButtons = Dictionary(uniqueKeysWithValues: PetSkin.all.map { ($0.id, NSButton()) })
-    private let scaleValue = NSTextField(labelWithString: "100%")
+    private let updateButton = NSButton(title: "更新到最新版本", target: nil, action: nil)
+    private let scaleValue = NSTextField(labelWithString: "58%")
     private let labelsSwitch = NSButton(checkboxWithTitle: "显示按键气泡", target: nil, action: nil)
     private let clickThroughSwitch = NSButton(checkboxWithTitle: "鼠标穿透", target: nil, action: nil)
 
-    private let sogouSwitch = NSButton(checkboxWithTitle: "使用搜狗输入法时自动隐藏", target: nil, action: nil)
     private let shareSwitch = NSButton(checkboxWithTitle: "同步按键和鼠标动作", target: nil, action: nil)
     private let networkSwitch = NSButton(checkboxWithTitle: "开启局域网联机", target: nil, action: nil)
     private let tabs = NSSegmentedControl(labels: ["桌宠", "联机"], trackingMode: .selectOne, target: nil, action: nil)
@@ -75,7 +134,29 @@ final class PetSettingsViewController: NSViewController {
         let title = NSTextField(labelWithString: "豚鼠键盘")
         title.font = .systemFont(ofSize: 17, weight: .bold)
         title.textColor = darkBrown
-        add(title, x: 70, top: 22, width: 170, height: 24, to: root)
+        add(title, x: 70, top: 12, width: 170, height: 24, to: root)
+
+        let version = NSTextField(labelWithString: "v" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知"))
+        version.font = .systemFont(ofSize: 11)
+        version.textColor = mutedBrown
+        updateButton.target = self
+        updateButton.action = #selector(downloadUpdate)
+        updateButton.isBordered = false
+        updateButton.font = .systemFont(ofSize: 11)
+        updateButton.contentTintColor = darkBrown
+        updateButton.toolTip = "在浏览器下载 macOS 版本，需手动安装"
+        updateButton.isHidden = true
+        let versionRow = NSStackView(views: [version, updateButton])
+        versionRow.orientation = .horizontal
+        versionRow.alignment = .centerY
+        versionRow.spacing = 4
+        versionRow.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(versionRow)
+        NSLayoutConstraint.activate([
+            versionRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 70),
+            versionRow.topAnchor.constraint(equalTo: root.topAnchor, constant: 37),
+            versionRow.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -18)
+        ])
 
         let closeButton = NSButton(title: "×", target: self, action: #selector(closePanel))
         closeButton.isBordered = false
@@ -90,7 +171,7 @@ final class PetSettingsViewController: NSViewController {
         petScroll.hasVerticalScroller = true
         petScroll.drawsBackground = false
         petScroll.borderType = .noBorder
-        petPage.frame = NSRect(x: 0, y: 0, width: 316, height: 420)
+        petPage.frame = NSRect(x: 0, y: 0, width: 316, height: 340)
         petScroll.documentView = petPage
         add(petScroll, x: 0, top: 100, width: 316, height: 352, to: root)
         add(lanPage, x: 0, top: 100, width: 316, height: 352, to: root)
@@ -119,16 +200,16 @@ final class PetSettingsViewController: NSViewController {
         }
 
         let sizeLabel = sectionLabel("大小")
-        add(sizeLabel, x: 18, top: 120 + controlOffset, width: 100, height: 18, to: petPage)
+        add(sizeLabel, x: 18, top: 120 + controlOffset, width: 40, height: 18, to: petPage)
         scaleValue.font = .systemFont(ofSize: 12, weight: .semibold)
         scaleValue.textColor = mutedBrown
         scaleValue.alignment = .center
-        add(scaleValue, trailing: 54, top: 120 + controlOffset, width: 45, height: 18, to: petPage)
+        add(scaleValue, x: 100, top: 120 + controlOffset, width: 45, height: 18, to: petPage)
 
         let minus = controlButton("−", action: #selector(decreaseScale))
-        add(minus, trailing: 103, top: 114 + controlOffset, width: 30, height: 30, to: petPage)
+        add(minus, x: 68, top: 114 + controlOffset, width: 30, height: 30, to: petPage)
         let plus = controlButton("+", action: #selector(increaseScale))
-        add(plus, trailing: 18, top: 114 + controlOffset, width: 30, height: 30, to: petPage)
+        add(plus, x: 147, top: 114 + controlOffset, width: 30, height: 30, to: petPage)
 
         labelsSwitch.target = self
         labelsSwitch.action = #selector(toggleLabels(_:))
@@ -141,10 +222,6 @@ final class PetSettingsViewController: NSViewController {
         clickThroughSwitch.contentTintColor = darkBrown
         add(clickThroughSwitch, x: 18, top: 188 + controlOffset, width: 270, height: 22, to: petPage)
 
-        sogouSwitch.target = self
-        sogouSwitch.action = #selector(toggleSogou(_:))
-        sogouSwitch.font = .systemFont(ofSize: 12)
-        add(sogouSwitch, x: 18, top: 219 + controlOffset, width: 280, height: 22, to: petPage)
         createRoom.target = self
         createRoom.action = #selector(createRoomAction)
         add(createRoom, x: 18, top: 10, width: 88, height: 26, to: lanPage)
@@ -214,12 +291,17 @@ final class PetSettingsViewController: NSViewController {
         add(quit, trailing: 18, top: 465, width: 96, height: 32, to: root)
     }
 
+    func setUpdateAvailable(_ available: Bool) {
+        updateButton.isHidden = !available
+    }
+
+    @objc private func downloadUpdate() { onDownloadUpdate?() }
+
     func refresh(skinID: String, scale: Double, showLabels: Bool, clickThrough: Bool,
-                 hideForSogou: Bool, networking: Bool, keys: UInt64, clicks: UInt64,
+                 networking: Bool, keys: UInt64, clicks: UInt64,
                  peers: [(String, LocalPeers.Peer)], networkStatus: String,
                  roomCode: String?, roomConnected: Bool, nickname: String, shareActivity: Bool = true) {
         shareSwitch.state = shareActivity ? .on : .off
-        sogouSwitch.state = hideForSogou ? .on : .off
         let inRoom = roomCode != nil
         let inLAN = networking && !inRoom
         networkSwitch.state = inLAN ? .on : .off
@@ -276,7 +358,7 @@ final class PetSettingsViewController: NSViewController {
         for skin in PetSkin.all {
             guard let button = skinButtons[skin.id] else { continue }
             let selected = skin.id == skinID
-            button.title = skin.isDrawn ? skin.name : String(skin.name.dropFirst(2))
+            button.title = String(skin.name.dropFirst(2))
             button.toolTip = selected ? skin.name + "（当前）" : skin.name
             button.layer?.borderWidth = selected ? 1.5 : 0.5
             button.layer?.borderColor = mutedBrown.withAlphaComponent(selected ? 0.8 : 0.3).cgColor
@@ -334,7 +416,6 @@ final class PetSettingsViewController: NSViewController {
     @objc private func toggleClickThrough(_ sender: NSButton) { onClickThroughChange?(sender.state == .on) }
     func setNetworkError(_ message: String) { networkError = message }
     @objc private func toggleShareActivity(_ sender: NSButton) { onShareActivityChange?(sender.state == .on) }
-    @objc private func toggleSogou(_ sender: NSButton) { onHideForSogouChange?(sender.state == .on) }
     @objc private func createRoomAction() { networkError = ""; onCreateRoom?() }
     @objc private func joinRoomAction() { networkError = ""; onJoinRoom?(joinCode.stringValue) }
     @objc private func exitRoomAction() { onExitRoom?() }

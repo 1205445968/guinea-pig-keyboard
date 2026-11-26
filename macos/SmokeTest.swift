@@ -2,6 +2,20 @@ import AppKit
 
 // Runs against the packaged application on both Mac architectures in CI.
 @MainActor func runSmokeTest() {
+    func releaseData(_ tag: String, asset: String = "WheekKeys-macOS.zip", host: String = "github.com", prerelease: Bool = false) -> Data {
+        let json: [String: Any] = ["tag_name": tag, "draft": false, "prerelease": prerelease,
+            "assets": [["name": asset, "browser_download_url": "https://\(host)/gwtt/guinea-pig-keyboard/releases/download/\(tag)/\(asset)"]]]
+        return try! JSONSerialization.data(withJSONObject: json)
+    }
+    precondition((try! PetUpdateChecker.updateURL(data: releaseData("v0.2.0"), currentVersion: "0.1.5")) != nil)
+    precondition((try! PetUpdateChecker.updateURL(data: releaseData("v0.1.5"), currentVersion: "0.1.5")) == nil)
+    precondition((try! PetUpdateChecker.updateURL(data: releaseData("v0.1.4"), currentVersion: "0.1.5")) == nil)
+    precondition((try! PetUpdateChecker.updateURL(data: releaseData("v0.2.0", asset: "WheekKeys.exe"), currentVersion: "0.1.5")) == nil)
+    precondition((try! PetUpdateChecker.updateURL(data: releaseData("v0.2.0", host: "example.com"), currentVersion: "0.1.5")) == nil)
+    precondition((try! PetUpdateChecker.updateURL(data: releaseData("v0.2.0", prerelease: true), currentVersion: "0.1.5")) == nil)
+    precondition((try? PetUpdateChecker.updateURL(data: releaseData("v0.2.0-beta"), currentVersion: "0.1.5")) == nil)
+    precondition(initialPetScale(0) == 0.58 && initialPetScale(-1) == 0.58)
+    precondition(initialPetScale(1.25) == 1.25 && initialPetScale(0.1) == 0.5 && initialPetScale(3) == 2)
     let ownID = String(repeating: "a", count: 32)
     let remoteID = String(repeating: "b", count: 32)
     func parse(_ text: String) -> (String, LocalPeers.Peer)? {
@@ -13,7 +27,15 @@ import AppKit
     precondition(parsed.1.skin == "pixel-longhair-gold-white", "Old peer coat was not mapped")
     precondition(PetSkin.named("gold-white").id == "pixel-golden-white", "Old profile coat was not mapped")
     precondition(PetSkin.all.first?.id == "pixel-tricolor", "Pixel appearance must remain the default")
-    precondition(PetSkin.named("drawn-tricolor").name == "手绘三花")
+    precondition(PetSkin.all.count == 14)
+    for (legacy, pixel) in [("tricolor", "tricolor"), ("californian", "californian"),
+                            ("gold-white", "golden-white"), ("teddy", "chocolate"),
+                            ("silver-agouti", "black-white"), ("longhair", "longhair-gold-white")] {
+        precondition(PetSkin.named("drawn-" + legacy).id == "pixel-" + pixel)
+        precondition(parse("WK1|\(remoteID)|drawn-\(legacy)|1|2")?.1.skin == "pixel-" + pixel)
+    }
+    precondition(PetSkin.find("drawn-unknown") == nil)
+    precondition(parse("WK1|\(remoteID)|drawn-unknown|1|2") == nil)
     precondition(PetSkin.named("longhair").id == "pixel-longhair-gold-white", "Legacy network coat was not preserved")
     for invalid in ["WK1|\(ownID)|longhair|1|2", "WK1|\(remoteID)|unknown|1|2",
                     "WK1|\(remoteID)|longhair|-1|2", "WK1|\(remoteID)|longhair|9223372036854775808|2",
@@ -58,8 +80,12 @@ import AppKit
     precondition(!RoomTransport.validPlaintext("WA1|\(remoteID)|1|") &&
                  !RoomTransport.validPlaintext(action + "\n"))
     precondition(namedPeers[remoteID]?.supportsActivity == false && !apply(action, now: 16))
+    let previousSkin = namedPeers[remoteID]?.skin
+    precondition(apply("WS1|\(remoteID)|drawn-unknown|1", now: 16))
+    precondition(namedPeers[remoteID]?.skin == previousSkin && namedPeers[remoteID]?.supportsActivity == true &&
+                 namedPeers[remoteID]?.sharingActivity == true)
     precondition(apply(appearance, now: 16) && apply(action, now: 16))
-    precondition(apply(valid, now: 16.1) && namedPeers[remoteID]?.skin == "drawn-tricolor")
+    precondition(apply(valid, now: 16.1) && namedPeers[remoteID]?.skin == "pixel-tricolor")
     precondition(!apply(action, now: 16.2) && !apply("WA1|\(remoteID)|2|k0,l", now: 16.2))
     precondition(namedPeers[remoteID]?.takeActions(now: 16.2) == [.key(0), .key(126), .click(false), .click(true)])
     precondition(apply("WA1|\(remoteID)|2|k57", now: 17))
@@ -82,17 +108,44 @@ import AppKit
         fatalError("Settings tabs missing")
     }
     precondition(tabs.selectedSegment == 0, "Settings must start on pet tab")
+    func updateButton() -> NSButton? {
+        descendants(settingsView).compactMap { $0 as? NSButton }.first { $0.title == "更新到最新版本" }
+    }
+    precondition(updateButton()?.isHiddenOrHasHiddenAncestor ?? true)
+    settings.setUpdateAvailable(true)
     settingsView.layoutSubtreeIfNeeded()
+    guard let availableUpdateButton = updateButton() else {
+        fatalError("Update button missing")
+    }
+    precondition(!availableUpdateButton.isHidden)
+    settings.setUpdateAvailable(false)
+    precondition(availableUpdateButton.isHidden)
+    settingsView.layoutSubtreeIfNeeded()
+    let controls = descendants(settingsView).compactMap { $0 as? NSButton }
+    guard let minus = controls.first(where: { $0.title == "−" }), let plus = controls.first(where: { $0.title == "+" }),
+          let scale = descendants(settingsView).compactMap({ $0 as? NSTextField }).first(where: { $0.stringValue == "58%" }) else {
+        fatalError("Scale controls missing")
+    }
+    let minusFrame = settingsView.convert(minus.bounds, from: minus)
+    let scaleFrame = settingsView.convert(scale.bounds, from: scale)
+    let plusFrame = settingsView.convert(plus.bounds, from: plus)
+    precondition(minusFrame.minX < scaleFrame.minX && scaleFrame.minX < plusFrame.minX && plusFrame.maxX < settingsView.bounds.midX + 50)
+    settings.refresh(skinID: "pixel-tricolor", scale: initialPetScale(0), showLabels: true, clickThrough: false,
+                     networking: false, keys: 0, clicks: 0, peers: [], networkStatus: "", roomCode: nil, roomConnected: false, nickname: "")
+    precondition(scale.stringValue == "58%")
+    settings.refresh(skinID: "pixel-tricolor", scale: initialPetScale(1.25), showLabels: true, clickThrough: false,
+                     networking: false, keys: 0, clicks: 0, peers: [], networkStatus: "", roomCode: nil, roomConnected: false, nickname: "")
+    precondition(scale.stringValue == "125%")
     let skinButtons = descendants(settingsView).compactMap { $0 as? NSButton }.filter {
         let id = $0.identifier?.rawValue ?? ""
-        return id.hasPrefix("pixel-") || id.hasPrefix("drawn-")
+        return id.hasPrefix("pixel-")
     }
-    precondition(skinButtons.count == 20 && skinButtons.allSatisfy { settingsView.bounds.contains(settingsView.convert($0.bounds, from: $0)) })
+    precondition(skinButtons.count == 14 && skinButtons.allSatisfy { settingsView.bounds.contains(settingsView.convert($0.bounds, from: $0)) })
     tabs.selectedSegment = 1
     tabs.sendAction(tabs.action, to: tabs.target)
     let firstPeer = LocalPeers.Peer(skin: "pixel-longhair-gold-white", keys: 12_345, clicks: 100_000_000, seen: 10)
     settings.refresh(skinID: "pixel-tricolor", scale: 1, showLabels: true, clickThrough: false,
-                     hideForSogou: true, networking: true, keys: 98_765, clicks: 3,
+                     networking: true, keys: 98_765, clicks: 3,
                      peers: [(remoteID, firstPeer)], networkStatus: "连接中", roomCode: invite, roomConnected: false, nickname: "")
     settingsView.layoutSubtreeIfNeeded()
     func visibleText() -> [NSTextField] {
@@ -107,7 +160,7 @@ import AppKit
     }
     nameInput.stringValue = "未保存的草稿"
     settings.refresh(skinID: "pixel-tricolor", scale: 1, showLabels: true, clickThrough: false,
-                     hideForSogou: true, networking: true, keys: 98_766, clicks: 3,
+                     networking: true, keys: 98_766, clicks: 3,
                      peers: [(remoteID, firstPeer)], networkStatus: "连接中", roomCode: invite, roomConnected: false, nickname: "")
     precondition(nameInput.stringValue == "未保存的草稿", "Refresh replaced nickname draft")
     let firstTexts = visibleText()
@@ -120,7 +173,7 @@ import AppKit
     let leaveBounds = settingsView.convert(leave.bounds, from: leave)
     precondition(settingsView.bounds.contains(leaveBounds), "Room controls outside settings view")
     settings.refresh(skinID: "pixel-tricolor", scale: 1, showLabels: true, clickThrough: false,
-                     hideForSogou: true, networking: true, keys: 98_765, clicks: 3,
+                     networking: true, keys: 98_765, clicks: 3,
                      peers: [], networkStatus: "已连接", roomCode: invite, roomConnected: true, nickname: "")
     let nextTexts = visibleText()
     precondition(nextTexts.contains { $0.stringValue == "房间已连接 · 伙伴 0" })
@@ -180,74 +233,19 @@ import AppKit
         return png
     }
 
-    func regionFingerprint(x: Range<Int>, y: Range<Int>) -> [UInt8] {
-        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
-            fatalError("No native bitmap context")
-        }
-        view.cacheDisplay(in: view.bounds, to: bitmap)
-        var result: [UInt8] = []
-        let scaleX = CGFloat(bitmap.pixelsWide) / 400
-        let scaleY = CGFloat(bitmap.pixelsHigh) / 308
-        for row in stride(from: y.lowerBound, to: y.upperBound, by: 2) {
-            for column in stride(from: x.lowerBound, to: x.upperBound, by: 2) {
-                let pixelX = Int((CGFloat(column) * scaleX).rounded())
-                let pixelY = Int((CGFloat(row) * scaleY).rounded())
-                guard let color = bitmap.colorAt(x: pixelX, y: pixelY)?.usingColorSpace(.deviceRGB) else {
-                    fatalError("Cannot sample desktop artwork")
-                }
-                var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
-                color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-                result.append(contentsOf: [red, green, blue, alpha].map {
-                    UInt8(clamping: Int(($0 * 255).rounded()))
-                })
-            }
-        }
-        return result
-    }
-
     var idleFrames = Set<Data>()
     let root = Bundle.main.resourceURL!
     for skin in PetSkin.all {
-        var files = [skin.body, skin.paw,
-                     skin.isDrawn ? "drawn-keyboard.png" : "keyboard.png",
-                     skin.isDrawn ? "drawn-mouse.png" : "mouse.png",
-                     "mouth-peep.png", "mouth-yawn.png"]
-        if skin.isDrawn { files.append(skin.networkID + "-eyes.png") }
+        let files = [skin.body, skin.paw, "keyboard.png", "mouse.png", "mouth-peep.png", "mouth-yawn.png"]
         for file in files {
             precondition(NSImage(contentsOf: root.appendingPathComponent(file)) != nil, "Missing sprite: \(file)")
         }
         view.selectSkin(skin.id)
         let idle = snapshot()
         precondition(idleFrames.insert(idle).inserted, "Identical appearance: \(skin.id)")
-        if skin.isDrawn {
-            precondition(skin.portrait(size: NSSize(width: 38, height: 40)) != nil, "Missing drawn portrait: \(skin.id)")
-        }
+        precondition(skin.portrait(size: NSSize(width: 38, height: 40)) != nil, "Missing portrait: \(skin.id)")
         print("Rendered \(skin.id)")
     }
-    view.selectSkin("pixel-californian")
-    let pixelKeyboard = regionFingerprint(x: 315..<347, y: 0..<308)
-    let pixelMouse = regionFingerprint(x: 70..<90, y: 0..<308)
-    view.selectSkin("drawn-tricolor")
-    let drawnKeyboard = regionFingerprint(x: 315..<347, y: 0..<308)
-    let drawnMouse = regionFingerprint(x: 70..<90, y: 0..<308)
-    precondition(pixelKeyboard != drawnKeyboard, "Keyboard artwork did not switch with skin")
-    precondition(pixelMouse != drawnMouse, "Mouse artwork did not switch with skin")
-    view.selectSkin("pixel-californian")
-    precondition(regionFingerprint(x: 315..<347, y: 0..<308) == pixelKeyboard, "Keyboard cache crossed skin switch")
-    precondition(regionFingerprint(x: 70..<90, y: 0..<308) == pixelMouse, "Mouse cache crossed skin switch")
-
-    view.selectSkin("drawn-tricolor")
-    let drawnIdle = snapshot()
-    view.pressKey(0)
-    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.075))
-    precondition(snapshot() != drawnIdle, "Drawn skin key press did not animate")
-    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.42))
-    let drawnMouseIdle = snapshot()
-    view.moveMouse(dx: 140, dy: 160)
-    view.clickMouse(right: false)
-    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.085))
-    precondition(snapshot() != drawnMouseIdle, "Drawn skin mouse grip did not animate")
-
     view.selectSkin("pixel-californian")
     let idle = snapshot()
     view.pressKey(0) // ANSI A
