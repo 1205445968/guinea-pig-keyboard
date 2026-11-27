@@ -95,6 +95,8 @@ import AppKit
     precondition(!waiting.joined)
     let advertisement = "WD2|\(invite)|\(hostID)|16|6Iqx55Sf"
     precondition(RoomDirectory.parse(advertisement, now: 11)?.name == "花生")
+    precondition(RoomDirectory.parse(advertisement, now: 11)?.label == "花生的公开房间")
+    precondition(RoomDirectory.parse("WD2|\(invite)|\(hostID)|2|", now: 11)?.label == "小豚鼠的公开房间")
     precondition(RoomDirectory.parse(advertisement.replacingOccurrences(of: "|16|", with: "|17|"), now: 11) == nil)
     precondition(LocalPeers.unexpired(peerMap, now: 29.99).count == 1)
     precondition(LocalPeers.unexpired(peerMap, now: 30).isEmpty)
@@ -209,18 +211,17 @@ import AppKit
     tabs.selectedSegment = 1
     tabs.sendAction(tabs.action, to: tabs.target)
     precondition(groupCode?.isHiddenOrHasHiddenAncestor == true)
-    guard let roomVisibility = descendants(settingsView).compactMap({ $0 as? NSPopUpButton })
-        .first(where: { $0.accessibilityLabel() == "房间可见性" }),
-          let createRoom = controls.first(where: { $0.title == "创建房间" }) else {
+    guard let createPrivate = controls.first(where: { $0.accessibilityLabel() == "创建私密房间" }),
+          let createPublic = controls.first(where: { $0.accessibilityLabel() == "创建公开房间" }) else {
         fatalError("Room creation controls missing")
     }
-    precondition(roomVisibility.titleOfSelectedItem == "私密" && roomVisibility.itemTitles == ["私密", "公开"])
-    precondition(controls.contains { $0.title == "发现公开房间" && !$0.isHiddenOrHasHiddenAncestor })
-    var createdPublicRoom = false
-    settings.onCreateRoom = { createdPublicRoom = $0 }
-    roomVisibility.selectItem(at: 1)
-    createRoom.sendAction(createRoom.action, to: createRoom.target)
-    precondition(createdPublicRoom)
+    precondition(!createPrivate.isHiddenOrHasHiddenAncestor && !createPublic.isHiddenOrHasHiddenAncestor)
+    precondition(controls.contains { $0.title == "凭码加入" && !$0.isHiddenOrHasHiddenAncestor })
+    var created: [Bool] = []
+    settings.onCreateRoom = { created.append($0) }
+    createPrivate.sendAction(createPrivate.action, to: createPrivate.target)
+    createPublic.sendAction(createPublic.action, to: createPublic.target)
+    precondition(created == [false, true])
     let firstPeer = LocalPeers.Peer(skin: "pixel-longhair-gold-white", keys: 12_345, clicks: 100_000_000, seen: 10)
     settings.refresh(skinID: "pixel-tricolor", scale: 1, showLabels: true, clickThrough: false,
                      keys: 98_765, clicks: 3,

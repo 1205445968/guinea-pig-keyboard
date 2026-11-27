@@ -158,7 +158,11 @@ final class LocalPeers {
                       accept(Array(message.utf8), now: now) { changed = true }
         }
         if let control = membership.nextPacket(now: now) { room.publish(control) }
-        directory?.advertise(now: now, code: code, host: session, count: membership.count, nickname: nickname?() ?? "")
+        if let directory = directory {
+            let name = nickname?() ?? ""
+            let ownerName = name.isEmpty ? PetSkin.named(payload?().0).name : name
+            directory.advertise(now: now, code: code, host: session, count: membership.count, nickname: ownerName)
+        }
         guard membership.joined else {
             status = membership.count == RoomMembership.capacity ? "房间已满，等待空位" : "等待房主确认"
             clearPeers()

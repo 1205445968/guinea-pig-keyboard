@@ -195,12 +195,64 @@ internal static class PixelSkinSmokeTest
         Check(update.Visibility == Visibility.Collapsed, "update button hidden after release removed");
         Check(!LogicalText(settings).Any(text => text.Contains("搜狗")), "no Sogou hiding setting");
         var network = (DockPanel)Field(settings, "networkPage");
-        var privacy = LogicalElements(network).OfType<ComboBox>().Single(box => box.Items.Count == 2);
-        Check((string)privacy.SelectedItem == "私密" && (string)privacy.Items[1] == "公开", "private room selected by default");
-        Check(LogicalElements(network).OfType<Button>().Any(button => ButtonText(button) == "发现公开房间"), "public room discovery entry");
+        var labels = LogicalElements(network).OfType<Button>().Select(button =>
+            System.Windows.Automation.AutomationProperties.GetName(button)).ToArray();
+        Check(labels.Contains("创建私密房间") && labels.Contains("创建公开房间") && labels.Contains("凭码加入"), "direct room actions");
         Check(!LogicalElements(network).OfType<Button>().Any(button => ButtonText(button).Contains("局域网")), "no LAN discovery entry");
-        var controls = (StackPanel)network.Children[0];
-        Check(!controls.Children.OfType<TextBlock>().Any(label => label.Text.Contains("联机时会共享具体按键")), "removed network paragraph");
+        Check(LogicalText(network).Contains("公开房间"), "public room list in lobby");
+        CheckLobbyActions(settings, app, owner);
+    }
+
+    private static void CheckLobbyActions(Window settings, Assembly app, object owner)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        const string brokerKey = "WHEEKKEYS_ROOM_BROKER";
+        string originalBroker = Environment.GetEnvironmentVariable(brokerKey);
+        var tabs = LogicalElements(settings).OfType<RadioButton>().ToArray();
+        var network = owner.GetType().GetProperty("Network", flags).GetValue(owner, null);
+        var roomPublic = network.GetType().GetProperty("RoomPublic");
+        var roomCode = network.GetType().GetProperty("RoomCode");
+        var buttons = LogicalElements((DockPanel)Field(settings, "networkPage")).OfType<Button>().ToArray();
+        Action<string> click = name => buttons.Single(button =>
+            System.Windows.Automation.AutomationProperties.GetName(button) == name).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        try
+        {
+            Environment.SetEnvironmentVariable(brokerKey, "invalid");
+            tabs.Single(tab => Equals(tab.Content, "联机")).IsChecked = true;
+            Check(Field(settings, "roomDirectory") != null, "opening lobby starts discovery");
+            foreach (bool isPublic in new[] { false, true })
+            {
+                click(isPublic ? "创建公开房间" : "创建私密房间");
+                Check(roomCode.GetValue(network, null) != null && (bool)roomPublic.GetValue(network, null) == isPublic,
+                    "room created with the chosen visibility");
+                Check(Field(settings, "roomDirectory") == null, "in-room view closes browsing connection");
+                click("退出房间");
+            }
+            const string code = "ABCDEFGHIJKLMNOP47UL";
+            Type directory = app.GetType("WheekKeys.RoomDirectory", true);
+            MethodInfo parse = directory.GetMethod("Parse", BindingFlags.Static | BindingFlags.NonPublic);
+            Array entries = Array.CreateInstance(parse.ReturnType, 1);
+            foreach (int count in new[] { 16, 2 })
+            {
+                string encodedName = count == 16 ? "" : "6Iqx55Sf";
+                entries.SetValue(parse.Invoke(null, new object[] { "WD2|" + code + "|" + new string('a', 32) + "|" + count + "|" + encodedName, 1.0 }), 0);
+                settings.GetType().GetMethod("ShowPublicRooms", flags).Invoke(settings, new object[] { entries });
+                var list = (StackPanel)Field(settings, "publicRooms");
+                Check(LogicalText(list).Contains(count == 16 ? "小豚鼠的公开房间" : "花生的公开房间"), "public room title uses the owner's name");
+                var join = LogicalElements(list).OfType<Button>().Single();
+                Check(join.IsEnabled == (count < 16), "full room disables row action");
+                if (join.IsEnabled) join.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }
+            Check(Equals(roomCode.GetValue(network, null), code) && (bool)roomPublic.GetValue(network, null), "row joins listed room");
+            click("退出房间");
+            tabs.Single(tab => Equals(tab.Content, "桌宠")).IsChecked = true;
+            Check(Field(settings, "roomDirectory") == null, "leaving lobby stops discovery");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(brokerKey, originalBroker);
+            ((IDisposable)network).Dispose();
+        }
     }
 
     private static void CheckStartupRegistration(Assembly app, object owner)

@@ -14,7 +14,7 @@ namespace WheekKeys
             public double Seen;
             public string Label
             {
-                get { return Count + "/" + RoomMembership.Capacity + " · " + (Name.Length == 0 ? "房间 " : Name + " · ") + Code.Substring(0, 5); }
+                get { return (Name.Length == 0 ? "小豚鼠" : Name) + "的公开房间"; }
             }
         }
 

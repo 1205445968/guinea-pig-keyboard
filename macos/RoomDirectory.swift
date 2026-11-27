@@ -6,7 +6,7 @@ final class RoomDirectory {
         let count: Int
         let seen: TimeInterval
         var label: String {
-            "\(count)/\(RoomMembership.capacity) · " + (name.isEmpty ? "房间 " : name + " · ") + String(code.prefix(5))
+            (name.isEmpty ? "小豚鼠" : name) + "的公开房间"
         }
     }
 

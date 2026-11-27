@@ -37,17 +37,15 @@ namespace WheekKeys
         private readonly DockPanel invitation = new DockPanel();
         private readonly TextBox roomInput = new TextBox();
         private readonly TextBlock invitationCode = Label(14, Ink);
-        private readonly ComboBox visibility = new ComboBox { Width = 66, Margin = new Thickness(0, 0, 6, 0) };
-        private readonly ComboBox publicRooms = new ComboBox { DisplayMemberPath = "Label", MinWidth = 130 };
-        private readonly StackPanel discovery = new StackPanel { Visibility = Visibility.Collapsed };
-        private readonly TextBlock discoveryStatus = Label(10.5, Muted);
-        private Button joinPublic;
+        private readonly StackPanel publicRooms = new StackPanel();
+        private readonly TextBlock discoveryStatus = Label(11, Muted);
+        private readonly DockPanel roomHeading = new DockPanel();
         private RoomDirectory roomDirectory;
         private RoomDirectory.Entry[] publicEntries = new RoomDirectory.Entry[0];
         private double nextDirectoryRefresh;
         private ToggleButton shareSwitch;
         private bool refreshingShareSwitch;
-        private Button create, leave, copy;
+        private Button copy;
         private string formMessage;
 
         private static TextBlock Label(double size, Brush color)
@@ -59,43 +57,31 @@ namespace WheekKeys
         {
             DockPanel page = new DockPanel();
             StackPanel controls = new StackPanel { Margin = new Thickness(2, 0, 2, 9) };
-            DockPanel.SetDock(controls, Dock.Top);
-            page.Children.Add(controls);
-            DockPanel heading = new DockPanel();
-            create = ActionButton("创建房间", SageSoft, delegate {
-                EnterRoom(RoomTransport.CreateCode(), true, visibility.SelectedIndex == 1, null);
-            });
-            leave = ActionButton("退出房间", Paper2, delegate {
+            Button leave = ActionButton("退出房间", Paper2, delegate {
                 owner.Network.Dispose();
                 formMessage = null;
                 RefreshActivity();
             });
-            DockPanel.SetDock(create, Dock.Right);
             DockPanel.SetDock(leave, Dock.Right);
-            heading.Children.Add(create);
-            heading.Children.Add(leave);
-            visibility.Items.Add("私密");
-            visibility.Items.Add("公开");
-            visibility.SelectedIndex = 0;
-            visibility.ToolTip = "私密房间通过房间码邀请，公开房间可被发现。每间最多 16 人。";
-            AutomationProperties.SetName(visibility, "房间可见性");
-            DockPanel.SetDock(visibility, Dock.Right);
-            heading.Children.Add(visibility);
-            TextBlock networkTitle = Label(15, Ink);
-            networkTitle.Text = "好友房间";
-            networkTitle.FontWeight = FontWeights.Bold;
-            heading.Children.Add(networkTitle);
-            controls.Children.Add(heading);
-            StackPanel state = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 0) };
+            roomHeading.Children.Add(leave);
+            roomHeading.Children.Add(new TextBlock { Text = "好友房间", FontSize = 15, FontWeight = FontWeights.Bold,
+                Foreground = Ink, VerticalAlignment = VerticalAlignment.Center });
+            controls.Children.Add(roomHeading);
+            StackPanel state = new StackPanel { Orientation = Orientation.Horizontal };
             state.Children.Add(statusDot);
             state.Children.Add(connection);
             controls.Children.Add(state);
-            shareSwitch = MakeSwitch(owner.Network.ShareActivity, delegate(bool value) {
-                if (!refreshingShareSwitch) owner.Network.ShareActivity = value;
-            });
-            controls.Children.Add(BuildToggleRow("同步按键和鼠标动作", shareSwitch));
+
+            lobby.Children.Add(new TextBlock { Text = "公开房间", FontSize = 15, FontWeight = FontWeights.Bold, Foreground = Ink });
+            discoveryStatus.HorizontalAlignment = HorizontalAlignment.Center;
+            discoveryStatus.TextWrapping = TextWrapping.Wrap;
+            Grid listing = new Grid { MinHeight = 44, Children = {
+                new ScrollViewer { Content = publicRooms, MaxHeight = 84, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled }, discoveryStatus } };
+            lobby.Children.Add(new Border { Background = Paper2, CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(8, 3, 8, 3), Margin = new Thickness(0, 4, 0, 0), Child = listing });
             DockPanel join = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
-            Button joinButton = ActionButton("加入", Paper2, JoinTypedRoom);
+            Button joinButton = ActionButton("凭码加入", Paper2, JoinTypedRoom);
             joinButton.Margin = new Thickness(5, 0, 0, 0);
             DockPanel.SetDock(joinButton, Dock.Right);
             join.Children.Add(joinButton);
@@ -123,32 +109,10 @@ namespace WheekKeys
             join.Children.Add(new Border { Child = field, BorderBrush = Line, BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6), Padding = new Thickness(7, 0, 3, 0), Background = Brushes.WhiteSmoke });
             lobby.Children.Add(join);
-            Button discover = ActionButton("发现公开房间", Paper2, delegate {
-                if (roomDirectory != null) StopRoomDiscovery();
-                else
-                {
-                    roomDirectory = new RoomDirectory();
-                    discovery.Visibility = Visibility.Visible;
-                    RefreshRoomDiscovery();
-                }
-            });
-            discover.HorizontalAlignment = HorizontalAlignment.Left;
-            discover.Margin = new Thickness(0, 4, 0, 0);
-            lobby.Children.Add(discover);
-            DockPanel pickRoom = new DockPanel { Margin = new Thickness(0, 4, 0, 0) };
-            joinPublic = ActionButton("加入", Paper2, delegate {
-                RoomDirectory.Entry entry = publicRooms.SelectedItem as RoomDirectory.Entry;
-                if (entry != null && entry.Count < RoomMembership.Capacity) EnterRoom(entry.Code, false, true, entry.Host);
-            });
-            joinPublic.Margin = new Thickness(5, 0, 0, 0);
-            DockPanel.SetDock(joinPublic, Dock.Right);
-            pickRoom.Children.Add(joinPublic);
-            publicRooms.SelectionChanged += delegate { UpdatePublicJoin(); };
-            AutomationProperties.SetName(publicRooms, "公开房间列表");
-            pickRoom.Children.Add(publicRooms);
-            discovery.Children.Add(pickRoom);
-            discovery.Children.Add(discoveryStatus);
-            lobby.Children.Add(discovery);
+            UniformGrid choices = new UniformGrid { Columns = 2, Margin = new Thickness(0, 8, 0, 4) };
+            choices.Children.Add(RoomChoice("创建私密房间", "仅凭房间码加入", false));
+            choices.Children.Add(RoomChoice("创建公开房间", "所有人都能发现", true));
+            lobby.Children.Add(choices);
             controls.Children.Add(lobby);
             invitation.Margin = new Thickness(0, 8, 0, 1);
             copy = ActionButton("复制房间码", Paper2, CopyCode);
@@ -162,7 +126,13 @@ namespace WheekKeys
             notice.Margin = new Thickness(0, 4, 0, 0);
             controls.Children.Add(notice);
 
+            shareSwitch = MakeSwitch(owner.Network.ShareActivity, delegate(bool value) {
+                if (!refreshingShareSwitch) owner.Network.ShareActivity = value;
+            });
+            controls.Children.Add(BuildToggleRow("同步按键和鼠标动作", shareSwitch));
+
             StackPanel content = new StackPanel();
+            content.Children.Add(controls);
             content.Children.Add(SelfCard());
             rosterHeader.Margin = new Thickness(3, 13, 3, 5);
             rosterTitle.FontWeight = FontWeights.SemiBold;
@@ -183,6 +153,21 @@ namespace WheekKeys
             page.Children.Add(new ScrollViewer { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
             return page;
+        }
+
+        private Button RoomChoice(string title, string description, bool isPublic)
+        {
+            TextBlock name = Label(12, Ink);
+            name.Text = title;
+            name.FontWeight = FontWeights.SemiBold;
+            TextBlock hint = Label(10.5, Muted);
+            hint.Text = description;
+            StackPanel text = new StackPanel { Children = { name, hint } };
+            Button choice = MakeButton(text, isPublic ? SageSoft : Paper2, Ink, double.NaN, 45);
+            choice.Margin = isPublic ? new Thickness(3, 0, 0, 0) : new Thickness(0, 0, 3, 0);
+            AutomationProperties.SetName(choice, title);
+            choice.Click += delegate { EnterRoom(RoomTransport.CreateCode(), true, isPublic, null); };
+            return choice;
         }
 
         private Button ActionButton(string title, Brush background, Action action)
@@ -225,34 +210,50 @@ namespace WheekKeys
             roomDirectory.Dispose();
             roomDirectory = null;
             nextDirectoryRefresh = 0;
-            publicRooms.ItemsSource = publicEntries = new RoomDirectory.Entry[0];
-            discovery.Visibility = Visibility.Collapsed;
+            publicEntries = new RoomDirectory.Entry[0];
+            publicRooms.Children.Clear();
         }
 
         private void RefreshRoomDiscovery()
         {
-            if (roomDirectory == null || publicRooms.IsDropDownOpen) return;
+            if (roomDirectory == null) roomDirectory = new RoomDirectory();
             double now = (double)Stopwatch.GetTimestamp() / Stopwatch.Frequency;
             if (now < nextDirectoryRefresh) return;
             nextDirectoryRefresh = now + 0.35;
             RoomDirectory.Entry[] entries = roomDirectory.Refresh(now);
-            if (!entries.Select(entry => entry.Code + entry.Host + entry.Label)
-                .SequenceEqual(publicEntries.Select(entry => entry.Code + entry.Host + entry.Label)))
-            {
-                RoomDirectory.Entry selected = publicRooms.SelectedItem as RoomDirectory.Entry;
-                publicRooms.ItemsSource = publicEntries = entries;
-                publicRooms.SelectedItem = entries.FirstOrDefault(entry => selected != null && entry.Code == selected.Code)
-                    ?? entries.FirstOrDefault();
-            }
-            discoveryStatus.Text = !roomDirectory.Connected ? roomDirectory.Status :
-                entries.Length == 0 ? "正在寻找公开房间…" : entries.Length + " 个公开房间";
-            UpdatePublicJoin();
+            if (entries.Length != publicEntries.Length || !entries.Zip(publicEntries, (a, b) =>
+                a.Code == b.Code && a.Host == b.Host && a.Name == b.Name && a.Count == b.Count).All(same => same))
+                ShowPublicRooms(entries);
+            discoveryStatus.Visibility = entries.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+            discoveryStatus.Text = roomDirectory.Connected ? "暂时没有公开房间" : roomDirectory.Status;
         }
 
-        private void UpdatePublicJoin()
+        private void ShowPublicRooms(RoomDirectory.Entry[] entries)
         {
-            RoomDirectory.Entry entry = publicRooms.SelectedItem as RoomDirectory.Entry;
-            joinPublic.IsEnabled = entry != null && entry.Count < RoomMembership.Capacity;
+            publicEntries = entries;
+            publicRooms.Children.Clear();
+            foreach (RoomDirectory.Entry entry in entries)
+            {
+                RoomDirectory.Entry selected = entry;
+                bool full = entry.Count == RoomMembership.Capacity;
+                Button join = ActionButton(full ? "已满" : "加入", full ? Paper2 : SageSoft,
+                    delegate { EnterRoom(selected.Code, false, true, selected.Host); });
+                join.IsEnabled = !full;
+                DockPanel row = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
+                DockPanel.SetDock(join, Dock.Right);
+                row.Children.Add(join);
+                TextBlock seats = Label(11, Muted);
+                seats.Margin = new Thickness(6, 0, 8, 0);
+                seats.Text = entry.Count + "/" + RoomMembership.Capacity;
+                DockPanel.SetDock(seats, Dock.Right);
+                row.Children.Add(seats);
+                TextBlock title = Label(12, Ink);
+                title.Text = entry.Label;
+                title.ToolTip = entry.Label;
+                title.TextTrimming = TextTrimming.CharacterEllipsis;
+                row.Children.Add(title);
+                publicRooms.Children.Add(row);
+            }
         }
 
         private void CopyCode()
@@ -362,19 +363,19 @@ namespace WheekKeys
             if (networkPage == null || networkPage.Visibility != Visibility.Visible) return;
             LocalPeers network = owner.Network;
             bool inRoom = network.Enabled;
-            lobby.Visibility = create.Visibility = inRoom ? Visibility.Collapsed : Visibility.Visible;
-            visibility.Visibility = create.Visibility;
-            RefreshRoomDiscovery();
+            lobby.Visibility = inRoom ? Visibility.Collapsed : Visibility.Visible;
+            roomHeading.Visibility = inRoom ? Visibility.Visible : Visibility.Collapsed;
+            if (!inRoom) RefreshRoomDiscovery();
             refreshingShareSwitch = true;
             shareSwitch.IsChecked = network.ShareActivity;
             shareSwitch.IsEnabled = network.ShareActivityAvailable;
             refreshingShareSwitch = false;
-            leave.Visibility = inRoom ? Visibility.Visible : Visibility.Collapsed;
             invitation.Visibility = network.RoomConnected ? Visibility.Visible : Visibility.Collapsed;
             if (inRoom)
                 invitationCode.Text = string.Join("-", Enumerable.Range(0, 4).Select(i => network.RoomCode.Substring(i * 5, 5)));
             int count = network.Members.Count;
-            connection.Text = inRoom ? network.RoomStatus : "每间最多 16 人，私密房间用房间码邀请。";
+            connection.Visibility = roomHeading.Visibility;
+            connection.Text = network.RoomStatus;
             connection.Foreground = network.RoomConnected ? OnlineInk : Muted;
             statusDot.Fill = connection.Foreground;
             statusDot.Visibility = inRoom ? Visibility.Visible : Visibility.Collapsed;

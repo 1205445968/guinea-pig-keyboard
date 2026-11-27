@@ -173,7 +173,7 @@ namespace WheekKeys
         public void Tick(double now, PetSkin skin, long keys, long clicks, string nickname)
         {
             if (room == null) return;
-            TickRoom(now, nickname);
+            TickRoom(now, string.IsNullOrEmpty(nickname) ? skin.Name : nickname);
             foreach (string id in peers.Where(p => now - p.Value.Seen >= 20 ||
                 !membership.Contains(p.Key)).Select(p => p.Key).ToArray())
             {
@@ -204,7 +204,7 @@ namespace WheekKeys
             FlushActions(now);
         }
 
-        private void TickRoom(double now, string nickname)
+        private void TickRoom(double now, string ownerName)
         {
             if (!room.Connected)
             {
@@ -222,7 +222,7 @@ namespace WheekKeys
             }
             string control = membership.NextPacket(now);
             if (control != null) room.Publish(control);
-            if (directory != null) directory.Advertise(now, RoomCode, session, membership.Count, nickname);
+            if (directory != null) directory.Advertise(now, RoomCode, session, membership.Count, ownerName);
         }
 
         private void FlushActions(double now)
