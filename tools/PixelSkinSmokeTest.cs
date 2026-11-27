@@ -53,7 +53,7 @@ internal static class PixelSkinSmokeTest
             object restoredSkin = windowType.GetProperty("ActiveSkin", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(owner, null);
             Check((string)skinType.GetField("Id").GetValue(restoredSkin) == "pixel-golden-white", "legacy profile migrated");
             Check(buttons.Keys.Cast<string>().Count(id => id.StartsWith("pixel-", StringComparison.Ordinal)) == 14, "pixel skin button count");
-            Check(buttons.Count == 18 && buttons.Keys.Cast<string>().Count(id => id.StartsWith("prone-")) == 4, "four prone skin buttons");
+            Check(buttons.Count == 22 && buttons.Keys.Cast<string>().Count(id => id.StartsWith("prone-")) == 8, "eight prone skin buttons");
             foreach (DictionaryEntry entry in buttons)
             {
                 Button button = (Button)entry.Value;
@@ -118,7 +118,7 @@ internal static class PixelSkinSmokeTest
             CheckRenderLifecycle(assembly);
             CheckNetworkCompatibility(assembly);
             CheckReleaseSelection(assembly);
-            Console.WriteLine("PASS: startup registration, settings labels and roundtrips, 18 skin buttons, wheel animation, render lifecycle, legacy aliases, peer names and counters");
+            Console.WriteLine("PASS: startup registration, settings labels and roundtrips, 22 skin buttons, wheel animation, render lifecycle, legacy aliases, peer names and counters");
             return 0;
         }
         catch (Exception ex)
@@ -514,7 +514,7 @@ internal static class PixelSkinSmokeTest
             read.Invoke(peer, new object[] { "WK1|" + session + "|longhair|12345|6789", 10.05 });
             object peerSkin = member.GetType().GetField("Skin").GetValue(member);
             Check((string)skinType.GetField("Id").GetValue(peerSkin) == "pixel-longhair-gold-white", "legacy peer skin mapped");
-            foreach (string id in new[] { "prone-tricolor", "prone-black-white", "prone-golden-white", "prone-cream" })
+            foreach (string id in new[] { "prone-tricolor", "prone-black-white", "prone-golden-white", "prone-cream", "prone-californian", "prone-teddy", "prone-silver-agouti", "prone-longhair" })
             {
                 read.Invoke(peer, new object[] { "WS1|" + session + "|" + id + "|1", 10.1 });
                 Check((string)skinType.GetField("Id").GetValue(member.GetType().GetField("Skin").GetValue(member)) == id, "exact prone peer " + id);

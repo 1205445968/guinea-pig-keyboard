@@ -58,26 +58,40 @@ internal static class MouthSceneSmokeTest
             foreach (object skin in (Array)skins.GetField("All").GetValue(null))
             {
                 object scene = Activator.CreateInstance(pet, true); pet.GetProperty("Skin").SetValue(scene, skin, null);
-                object renderer = Renderer(scene); bool pixel = true;
+                object renderer = Renderer(scene);
                 string id = (string)skins.GetField("Id").GetValue(skin);
+                bool prone = id.StartsWith("prone-");
+                bool pixel = !prone;
                 byte[] resting = Render(scene); SetMouth(scene, true); byte[] smacking = Render(scene);
                 int changed = Differences(resting, smacking);
                 object art = Field(Field(renderer, "Eyes"), "_mouth");
                 byte[][] raw = (byte[][])art.GetType().GetField("Pixels").GetValue(art);
                 int sourceWidth = ((BitmapSource[])art.GetType().GetField("Frames").GetValue(art))[0].PixelWidth;
                 Rect sourceRegion = (Rect)Field(art, "region");
-                Check(PinkPixels(raw[0], sourceWidth, sourceRegion) > 0, id + " open mouth has visible pink tongue");
-                int restingPink = PinkPixels(raw[0], sourceWidth, sourceRegion);
-                bool closes = false;
-                for (int frame = 1; frame < raw.Length; frame++) if (PinkPixels(raw[frame], sourceWidth, sourceRegion) < restingPink) closes = true;
-                Check(closes, id + " mouth animation closes between frames");
                 object eyeArt = Field(renderer, "Eyes");
                 BitmapSource[] eyeFrames = (BitmapSource[])eyeArt.GetType().GetField("_eyes", Private).GetValue(eyeArt);
+                if (prone)
+                {
+                    int sourceHeight = ((BitmapSource[])art.GetType().GetField("Frames").GetValue(art))[0].PixelHeight;
+                    Check(eyeFrames[0].PixelWidth == 128 && eyeFrames[0].PixelHeight == 112, id + " hand-drawn eye frame size");
+                    object body = eyeArt.GetType().GetProperty("Body").GetValue(eyeArt, null);
+                    byte[] bodyPixels = new byte[sourceWidth * sourceHeight * 4];
+                    new FormatConvertedBitmap((BitmapSource)body, PixelFormats.Pbgra32, null, 0).CopyPixels(bodyPixels, sourceWidth * 4, 0);
+                    Check(Differences(raw[0], bodyPixels) == 0, id + " resting mouth pixels match original body");
+                }
+                else
+                {
+                    Check(PinkPixels(raw[0], sourceWidth, sourceRegion) > 0, id + " open mouth has visible pink tongue");
+                    int restingPink = PinkPixels(raw[0], sourceWidth, sourceRegion);
+                    bool closes = false;
+                    for (int frame = 1; frame < raw.Length; frame++) if (PinkPixels(raw[frame], sourceWidth, sourceRegion) < restingPink) closes = true;
+                    Check(closes, id + " mouth animation closes between frames");
+                }
                 byte[] eyePixels = new byte[eyeFrames[0].PixelWidth * eyeFrames[0].PixelHeight * 4];
                 new FormatConvertedBitmap(eyeFrames[0], PixelFormats.Pbgra32, null, 0).CopyPixels(eyePixels, eyeFrames[0].PixelWidth * 4, 0);
                 HashSet<string> eyeColors = new HashSet<string>();
                 for (int i = 0; i < eyePixels.Length; i += 4) if (eyePixels[i + 3] != 0) eyeColors.Add(eyePixels[i] + "," + eyePixels[i + 1] + "," + eyePixels[i + 2]);
-                Check(eyeColors.Count == 1, id + " open eye uses one visible color");
+                if (!prone) Check(eyeColors.Count == 1, id + " open eye uses one visible color");
                 Check(Frame(scene) == 3 && changed > 0, id + " mouth visibly changes (frame " + Frame(scene) + ", pixels " + changed + ", source " + Differences(raw[0], raw[3]) + ")");
                 Check(Differences(raw[0], raw[3]) > 0, id + " source mouth pixels move");
                 for (int i = 0; i < raw[0].Length; i += 4)
@@ -87,13 +101,13 @@ internal static class MouthSceneSmokeTest
                     if (sourceRegion.Contains(new Point(x, y))) continue;
                     for (int c = 0; c < 4; c++) Check(raw[0][i + c] == raw[3][i + c], id + " source art outside mouth preserved");
                 }
-                Rect area = id.StartsWith("prone-") ? new Rect(260, 174, 17, 15) : new Rect(198, 112, 50, 42);
+                Rect area = prone ? new Rect(143, 170, 26, 21) : new Rect(198, 112, 50, 42);
                 for (int y = 0; y < 308; y++) for (int x = 0; x < 400; x++)
                 {
                     int index = (y * 400 + x) * 4;
                     Check(resting[index + 3] == smacking[index + 3], id + " alpha silhouette unchanged");
                     if (area.Contains(new Point(x, y))) continue;
-                    for (int channel = 0; channel < 4; channel++) Check(resting[index + channel] == smacking[index + channel], id + " pixels outside mouth unchanged at " + x + "," + y);
+                    for (int channel = 0; channel < 4; channel++) Check(Math.Abs(resting[index + channel] - smacking[index + channel]) <= (prone && channel < 3 ? 1 : 0), id + " pixels outside mouth unchanged at " + x + "," + y);
                 }
                 SetMouth(scene, false); Check(Differences(resting, Render(scene)) == 0, id + " returns to original drawing");
                 if (pixel)

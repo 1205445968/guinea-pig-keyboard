@@ -26,6 +26,7 @@ namespace WheekKeys
         private const byte BackgroundB = 241;
         private readonly BitmapSource[] _eyes;
         private readonly BitmapSource[] _sleepEyes;
+        private readonly DrawnProneArt _drawn;
         private static readonly BitmapSource OpenMouth = PixelPetScene.Sprite("mouth-smile.png");
         private static readonly BitmapSource PeepMouth = PixelPetScene.Sprite("mouth-peep.png");
         private static readonly BitmapSource YawnMouth = PixelPetScene.Sprite("mouth-yawn.png");
@@ -41,6 +42,17 @@ namespace WheekKeys
         private Vector _dozeDirection;
 
         public BitmapSource Body { get; private set; }
+
+        public EyeArt(DrawnProneArt drawn)
+        {
+            _drawn = drawn;
+            Body = drawn.Body;
+            _sourceWidth = Body.PixelWidth;
+            _sourceHeight = Body.PixelHeight;
+            _mouth = drawn.Mouth;
+            _eyes = drawn.BlinkEyes;
+            _sleepEyes = drawn.SleepEyes;
+        }
 
         public EyeArt(BitmapSource source) : this(source, true, Color.FromRgb(98, 71, 55), null) { }
 
@@ -112,6 +124,7 @@ namespace WheekKeys
 
         public Vector Offset(Point cursor, Rect bodyBounds)
         {
+            if (_drawn != null) return _drawn.Offset(cursor, bodyBounds);
             double midX = (_eyePositions[0] + _eyePositions[_eyePositions.Length - 1] + EyeSize) / 2.0;
             Point center = new Point(bodyBounds.X + midX * bodyBounds.Width / 100,
                 bodyBounds.Y + (_eyeHeightRatio + (EyeSize / 2.0 - BodyLift) / _sourceHeight) * bodyBounds.Height);
@@ -138,6 +151,11 @@ namespace WheekKeys
 
         public void Draw(DrawingContext dc, Rect bodyBounds, Vector head, int blinkFrame, double drowsiness, double eyeScale, int mouth, int dozeMouth)
         {
+            if (_drawn != null)
+            {
+                _drawn.Draw(dc, bodyBounds, head, blinkFrame, drowsiness, eyeScale, mouth);
+                return;
+            }
             BitmapSource headImage;
             if (dozeMouth > 0 && dozeMouth <= 2)
             {
@@ -180,6 +198,7 @@ namespace WheekKeys
 
         private void DrawEyes(DrawingContext dc, Rect bounds, Vector head, int blinkFrame, double drowsiness, double eyeScale)
         {
+            if (_drawn != null) { _drawn.DrawEyes(dc, bounds, head, blinkFrame, drowsiness, eyeScale); return; }
             BitmapSource eye = drowsiness > 0 ? _sleepEyes[IdleSleepAnimation.FrameIndex(drowsiness)]
                 : _eyes[Math.Max(0, Math.Min(_eyes.Length - 1, blinkFrame))];
             foreach (int x in _eyePositions) dc.DrawImage(eye, EyeBounds(x, bounds, head, eyeScale));

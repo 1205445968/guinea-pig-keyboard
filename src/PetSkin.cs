@@ -25,7 +25,11 @@ namespace WheekKeys
             new PetSkin("prone-tricolor", "趴趴三花", "tricolor", "tricolor", true),
             new PetSkin("prone-black-white", "趴趴黑白", "black-white", "silver-agouti", true),
             new PetSkin("prone-golden-white", "趴趴黄白", "golden-white", "gold-white", true),
-            new PetSkin("prone-cream", "趴趴奶油", "cream", "californian", true)
+            new PetSkin("prone-cream", "趴趴奶油", "cream", "californian", true),
+            new PetSkin("prone-californian", "趴趴白加州", "californian", "californian", true, "californian"),
+            new PetSkin("prone-teddy", "趴趴美泰", "chocolate", "teddy", true, "teddy"),
+            new PetSkin("prone-silver-agouti", "趴趴雕灰", "black-white", "silver-agouti", true, "silver-agouti"),
+            new PetSkin("prone-longhair", "趴趴长毛猪", "longhair-template", "longhair", true, "longhair")
         };
 
         private static readonly SortedDictionary<string, PetSkin> custom = new SortedDictionary<string, PetSkin>(StringComparer.Ordinal);
@@ -36,6 +40,7 @@ namespace WheekKeys
         public readonly string Name;
         public readonly string PixelCoatId;
         public readonly string NetworkId;
+        public readonly string DrawnArtId;
         public readonly bool IsProne;
         public bool IsCustom { get { return BaseSkin != null; } }
         public PetSkin BaseSkin { get; private set; }
@@ -47,12 +52,13 @@ namespace WheekKeys
         public Color? CustomEyeColor { get; internal set; }
         public string Author { get; internal set; }
 
-        private PetSkin(string id, string name, string pixelCoatId, string networkId, bool prone = false)
+        private PetSkin(string id, string name, string pixelCoatId, string networkId, bool prone = false, string drawnArtId = null)
         {
             Id = id;
             Name = name;
             PixelCoatId = pixelCoatId;
             NetworkId = networkId;
+            DrawnArtId = drawnArtId;
             IsProne = prone;
         }
 
@@ -60,6 +66,9 @@ namespace WheekKeys
         {
             PetSkin basis = Find(baseCoat);
             if (basis == null || basis.IsCustom) basis = All[0];
+            if (basis.DrawnArtId != null)
+                foreach (PetSkin pixel in All)
+                    if (!pixel.IsProne && pixel.PixelCoatId == basis.PixelCoatId) { basis = pixel; break; }
             return new PetSkin("wheek-" + id, name, basis.PixelCoatId, basis.NetworkId, basis.IsProne) { BaseSkin = basis };
         }
 

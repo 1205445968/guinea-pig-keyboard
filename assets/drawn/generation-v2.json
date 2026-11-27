@@ -1,0 +1,139 @@
+{
+  "tool": "built-in image_gen",
+  "template": "tricolor-body.png",
+  "preserve": "Original PSD/JPG and original PNG are retained in the pre-unification art backup. All 8 body PNGs use the common original muzzle glyph; only tricolor outline was polished afterwards.",
+  "canvas": [
+    492,
+    286
+  ],
+  "opaqueTemplateBounds": [
+    75,
+    38,
+    414,
+    233
+  ],
+  "longhairBounds": [
+    69,
+    31,
+    420,
+    246
+  ],
+  "initialPrompts": [
+    {
+      "id": "golden-white",
+      "prompt": "Edit target: supplied transparent guinea pig BODY game sprite, not the old design. Preserve this EXACT short round right-facing body template, silhouette, proportions, drooping ear geometry and placement, thick dark-brown outer contour, original nose and small Y-shaped mouth, softly textured flat illustration. Keep the same framing and transparent LEFT margin as the input, using its 492 x 286 coordinate system. BODY LAYER ONLY: NO EYES, NO FEET, NO HANDS, NO KEYBOARD, no additional characters, objects, text, bows or hats. The eyes and four small feet are separate runtime layers; keep the face intentionally eyeless. Do not add eyes. Maintain exact mouth and ear position. Genuine transparent background. Change only the fur colors/markings as follows: Yellow-and-white coat. Replace both the original dark brown rear patch and the orange cheek/ear patch with pale buttery cream-yellow fur (#E7C383 approximately), gentle warm shading. Preserve the creamy white face around the nose and white belly. NO colored patch around the nose. This should be a pale yellow-and-white animal, not orange."
+    },
+    {
+      "id": "cream",
+      "prompt": "Edit target: supplied transparent guinea pig BODY game sprite, not the old design. Preserve this EXACT short round right-facing body template, silhouette, proportions, drooping ear geometry and placement, thick dark-brown outer contour, original nose and small Y-shaped mouth, softly textured flat illustration. Keep the same framing and transparent LEFT margin as the input, using its 492 x 286 coordinate system. BODY LAYER ONLY: NO EYES, NO FEET, NO HANDS, NO KEYBOARD, no additional characters, objects, text, bows or hats. The eyes and four small feet are separate runtime layers; keep the face intentionally eyeless. Do not add eyes. Maintain exact mouth and ear position. Genuine transparent background. Change only the fur colors/markings as follows: Uniform pale cream/buff guinea pig coat (#E8D2A4 approximately), soft warm ivory highlights. Remove the original tricolor patch boundaries entirely; body is one continuous cream coat, ear slightly warmer beige. Keep the nose and mouth unchanged. No white disk or separate nose patch, no dark rear patch."
+    },
+    {
+      "id": "californian",
+      "prompt": "Edit target: supplied transparent guinea pig BODY game sprite, not the old design. Preserve this EXACT short round right-facing body template, silhouette, proportions, drooping ear geometry and placement, thick dark-brown outer contour, original nose and small Y-shaped mouth, softly textured flat illustration. Keep the same framing and transparent LEFT margin as the input, using its 492 x 286 coordinate system. BODY LAYER ONLY: NO EYES, NO FEET, NO HANDS, NO KEYBOARD, no additional characters, objects, text, bows or hats. The eyes and four small feet are separate runtime layers; keep the face intentionally eyeless. Do not add eyes. Maintain exact mouth and ear position. Genuine transparent background. Change only the fur colors/markings as follows: California-point coat: warm creamy-white body, dark warm taupe/chocolate drooping ear, a small softly feathered brown-gray nose/muzzle marking around the existing nose at the far right. Remove the original orange cheek patch and rear brown patch; most of body is warm off-white. Keep mouth geometry and location unchanged."
+    },
+    {
+      "id": "teddy",
+      "prompt": "Edit target: supplied transparent guinea pig BODY game sprite, not the old design. Preserve this EXACT short round right-facing body template, silhouette, proportions, drooping ear geometry and placement, thick dark-brown outer contour, original nose and small Y-shaped mouth, softly textured flat illustration. Keep the same framing and transparent LEFT margin as the input, using its 492 x 286 coordinate system. BODY LAYER ONLY: NO EYES, NO FEET, NO HANDS, NO KEYBOARD, no additional characters, objects, text, bows or hats. The eyes and four small feet are separate runtime layers; keep the face intentionally eyeless. Do not add eyes. Maintain exact mouth and ear position. Genuine transparent background. Change only the fur colors/markings as follows: Warm chocolate/cinnamon teddy coat (#A66E47 approximately), uniform brown fur with gentle warm highlights, slightly deeper brown ear. Remove the original white/gold/brown patch boundaries; continuous warm brown coat. Add only two or three very subtle short lighter fur marks on the rear flank inside the existing smooth silhouette. Keep exact outline and mouth location."
+    },
+    {
+      "id": "silver-agouti",
+      "prompt": "Edit target: supplied transparent guinea pig BODY game sprite, not the old design. Preserve this EXACT short round right-facing body template, silhouette, proportions, drooping ear geometry and placement, thick dark-brown outer contour, original nose and small Y-shaped mouth, softly textured flat illustration. Keep the same framing and transparent LEFT margin as the input, using its 492 x 286 coordinate system. BODY LAYER ONLY: NO EYES, NO FEET, NO HANDS, NO KEYBOARD, no additional characters, objects, text, bows or hats. The eyes and four small feet are separate runtime layers; keep the face intentionally eyeless. Do not add eyes. Maintain exact mouth and ear position. Genuine transparent background. Change only the fur colors/markings as follows: Silver agouti coat: soft ash/taupe-gray fur (#AAA095 approximately) over rear body and cheek/ear, warm ivory around the nose and lower belly, deep warm-gray ear. A few sparse short darker gray fur strokes on rear flank to suggest agouti fur. No orange or golden fur. Keep the same exact smooth silhouette and face geometry."
+    },
+    {
+      "id": "longhair",
+      "prompt": "Edit target: supplied transparent guinea pig BODY game sprite, not the old design. Preserve this EXACT short round right-facing body template, silhouette, proportions, drooping ear geometry and placement, thick dark-brown outer contour, original nose and small Y-shaped mouth, softly textured flat illustration. Keep the same framing and transparent LEFT margin as the input, using its 492 x 286 coordinate system. BODY LAYER ONLY: NO EYES, NO FEET, NO HANDS, NO KEYBOARD, no additional characters, objects, text, bows or hats. The eyes and four small feet are separate runtime layers; keep the face intentionally eyeless. Do not add eyes. Maintain exact mouth and ear position. Genuine transparent background. Change only the fur colors/markings as follows: Longhair golden-and-white variant, using the SAME compact silhouette and body proportions (no longer or bigger body). Pale creamy golden rear and cheek patches with an ivory face and belly; no nose patch. Suggest longer fur using a few soft flowing curved golden/cream fur strands INSIDE the outline. Do not make the outline fluffy or change foot attachment height. No accessories."
+    }
+  ],
+  "cleanupPrompts": [
+    {
+      "id": "black-white",
+      "source": "exec-93b42ce5-ded4-4063-9f51-eaa060f7fc43.png",
+      "prompt": "Precise production sprite layer edit: REMOVE ONLY the small nose, nostril strokes, pink nose stem and Y mouth from the supplied guinea pig BODY image, filling that tiny muzzle area with the surrounding natural fur color/texture. Keep ALL fur patches, ear, silhouette, thick brown outline, exact body position, proportions and framing unchanged. The game will overlay ONE shared nose and mouth animation later, so this BODY layer must have NO nose, NO nostrils, NO mouth, NO eyes. For California-point fur preserve the colored muzzle patch, remove just the facial marks. NO feet, hands, keyboard, objects or text. Preserve genuine transparency."
+    },
+    {
+      "id": "golden-white",
+      "source": "exec-03a94386-57d6-42f5-afb8-e0fee486f2fc.png",
+      "prompt": "Precise production sprite layer edit: REMOVE ONLY the small nose, nostril strokes, pink nose stem and Y mouth from the supplied guinea pig BODY image, filling that tiny muzzle area with the surrounding natural fur color/texture. Keep ALL fur patches, ear, silhouette, thick brown outline, exact body position, proportions and framing unchanged. The game will overlay ONE shared nose and mouth animation later, so this BODY layer must have NO nose, NO nostrils, NO mouth, NO eyes. For California-point fur preserve the colored muzzle patch, remove just the facial marks. NO feet, hands, keyboard, objects or text. Preserve genuine transparency."
+    },
+    {
+      "id": "cream",
+      "source": "exec-aded41ca-6e2d-4d59-aada-b124de9439b0.png",
+      "prompt": "Precise production sprite layer edit: REMOVE ONLY the small nose, nostril strokes, pink nose stem and Y mouth from the supplied guinea pig BODY image, filling that tiny muzzle area with the surrounding natural fur color/texture. Keep ALL fur patches, ear, silhouette, thick brown outline, exact body position, proportions and framing unchanged. The game will overlay ONE shared nose and mouth animation later, so this BODY layer must have NO nose, NO nostrils, NO mouth, NO eyes. For California-point fur preserve the colored muzzle patch, remove just the facial marks. NO feet, hands, keyboard, objects or text. Preserve genuine transparency."
+    },
+    {
+      "id": "californian",
+      "source": "exec-aed9a0e9-272d-4e94-81f0-d0cf77f10583.png",
+      "prompt": "Precise production sprite layer edit: REMOVE ONLY the small nose, nostril strokes, pink nose stem and Y mouth from the supplied guinea pig BODY image, filling that tiny muzzle area with the surrounding natural fur color/texture. Keep ALL fur patches, ear, silhouette, thick brown outline, exact body position, proportions and framing unchanged. The game will overlay ONE shared nose and mouth animation later, so this BODY layer must have NO nose, NO nostrils, NO mouth, NO eyes. For California-point fur preserve the colored muzzle patch, remove just the facial marks. NO feet, hands, keyboard, objects or text. Preserve genuine transparency."
+    },
+    {
+      "id": "teddy",
+      "source": "exec-52766713-0395-4e5b-8a46-2fff52a0b479.png",
+      "prompt": "Precise production sprite layer edit: REMOVE ONLY the small nose, nostril strokes, pink nose stem and Y mouth from the supplied guinea pig BODY image, filling that tiny muzzle area with the surrounding natural fur color/texture. Keep ALL fur patches, ear, silhouette, thick brown outline, exact body position, proportions and framing unchanged. The game will overlay ONE shared nose and mouth animation later, so this BODY layer must have NO nose, NO nostrils, NO mouth, NO eyes. For California-point fur preserve the colored muzzle patch, remove just the facial marks. NO feet, hands, keyboard, objects or text. Preserve genuine transparency."
+    },
+    {
+      "id": "silver-agouti",
+      "source": "exec-1e464cb3-bb41-40d7-b145-af738a57cfc9.png",
+      "prompt": "Precise production sprite layer edit: REMOVE ONLY the small nose, nostril strokes, pink nose stem and Y mouth from the supplied guinea pig BODY image, filling that tiny muzzle area with the surrounding natural fur color/texture. Keep ALL fur patches, ear, silhouette, thick brown outline, exact body position, proportions and framing unchanged. The game will overlay ONE shared nose and mouth animation later, so this BODY layer must have NO nose, NO nostrils, NO mouth, NO eyes. For California-point fur preserve the colored muzzle patch, remove just the facial marks. NO feet, hands, keyboard, objects or text. Preserve genuine transparency."
+    },
+    {
+      "id": "longhair",
+      "source": "exec-734cd691-5bbe-430a-9840-f7f9ac8f2fb9.png",
+      "prompt": "Edit this generated golden-white guinea pig BODY sprite. Keep exactly the same short round side-facing body size, position, ear and fur palette. Add a few modest, smoothly rounded LONG-HAIR TUFTS to the OUTER SILHOUETTE along the rear/back and lower belly, like soft overlapping locks of hair; not sharp spikes, not a huge fluffy body. Keep the same approximate body length and belly baseline for the existing feet animation. Preserve the flowing inner fur markings. IMPORTANT production layer change: REMOVE ALL facial nose, nostril and mouth marks, leaving natural clean coat in that small muzzle area. The exact original mouth/nose will be added separately as a shared animation layer; do NOT draw any mouth, nose, nostrils or eyes. NO FEET, no hands, no keyboard, no objects or text. Keep genuine transparent background and the same framing and transparent margin as the input."
+    }
+  ],
+  "creamFinalPrompt": "Recolor this cute cartoon guinea pig game-sprite body into a uniform LIGHT CREAM / BUFF coat (#E8D2A4 approximately). Keep the exact round silhouette, drooping ear outline, position, framing, proportions, transparent background, and soft illustrated fabric-free texture. Remove only the yellow-white coat-patch boundaries, making a continuous pale cream coat; ear slightly warmer beige. This is one separate background BODY LAYER of a desktop pet: leave the face BLANK, without eyes, nose or mouth, because those are supplied by the original shared animation layer. No feet, hands, accessories, objects, keyboard, text or additional characters. Preserve transparency.",
+  "outputs": [
+    {
+      "id": "black-white",
+      "file": "black-white-body.png",
+      "source": "exec-2501ff6a-58bf-450f-b809-53368dbf7448.png"
+    },
+    {
+      "id": "golden-white",
+      "file": "golden-white-body.png",
+      "source": "exec-2a03bee3-3954-4c59-859d-40a9cc807676.png"
+    },
+    {
+      "id": "cream",
+      "file": "cream-body.png",
+      "source": "exec-04f3dc14-732a-487b-99d9-4ee401fbd85e.png"
+    },
+    {
+      "id": "californian",
+      "file": "californian-body.png",
+      "source": "exec-65d3b4f7-20b5-4442-b1e3-026086d34b4a.png"
+    },
+    {
+      "id": "teddy",
+      "file": "teddy-body.png",
+      "source": "exec-0062279f-b358-4dbb-a7f4-d2b4a61438c5.png"
+    },
+    {
+      "id": "silver-agouti",
+      "file": "silver-agouti-body.png",
+      "source": "exec-6835b836-9154-4b99-ac13-352cbc4c71ef.png"
+    },
+    {
+      "id": "longhair",
+      "file": "longhair-body.png",
+      "source": "exec-22d8619d-54a5-408e-8bd8-6f7819b24fd8.png"
+    }
+  ],
+  "blackWhiteInitialPrompt": "Edit supplied transparent tricolor guinea pig BODY game sprite into black-and-white coat: preserve exact silhouette, pose, ear, original nose and small Y mouth, outline and framing; recolor golden cheek/ear and brown rear patches to warm deep charcoal, keep ivory face and belly. No eyes, hands, feet, keyboard or objects. Genuine transparency. Followed by the saved face-cleanup prompt.",
+  "mouthLayer": {
+    "source": "tricolor-body.png",
+    "bounds": [
+      430,
+      132,
+      41,
+      63
+    ],
+    "method": "Matte original brown and pink facial marks against ivory background, discard components smaller than 25 pixels, composite the same transparent glyph at the original coordinates into all 7 new normalized bodies. Original tricolor is preserved."
+  },
+  "tricolorPolish": {
+    "prompt": "Precise polish of Image 1, the original tricolor guinea pig BODY game sprite. Image 2 is only a reference for smoother ink quality. Smooth and round the uneven/jagged dark-brown OUTER BODY OUTLINE and the drooping ear line, maintaining the original approximate 7-source-pixel line thickness, short compact body proportions, right-facing pose, exact ear position/shape, original warm orange cheek patch and brown rear patch, ivory face/belly and softly painted fur texture. Keep the original tricolor identity and patch arrangement from Image 1; do not recolor it to Image 2. Remove stray isolated pixels outside the body and tiny bumps caused by brush edges; make the contour flow smoothly. Do not enlarge, fatten or elongate the body. BODY LAYER ONLY: no eyes, feet, hands, keyboard or accessories. Leave the small muzzle area without any nose, nostrils or mouth marks because the exact original common nose and mouth are composited back from the source template during game asset preparation. No facial marks, no text. Genuine transparent background; keep the same canvas framing and left margin as Image 1.",
+    "source": "exec-bfa38a77-38fa-47c4-894b-90d386d21077.png",
+    "file": "tricolor-body.png",
+    "note": "Rounded outline and ear line; original common muzzle recomposited from the preserved pre-unification source. Original PSD/JPG retained."
+  }
+}

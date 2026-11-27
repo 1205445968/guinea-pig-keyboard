@@ -30,6 +30,7 @@ namespace WheekKeys
         private BitmapSource Paw;
         private Brush ForelegFill;
         private Brush ForelegEdge;
+        private DrawnProneArt drawnProne;
         private PetSkin skin;
         private DeskSkin desk = DeskSkin.Default;
         private static readonly Dictionary<string, FormattedText> Labels = new Dictionary<string, FormattedText>();
@@ -89,9 +90,10 @@ namespace WheekKeys
                 double now = clock.Elapsed.TotalMilliseconds;
                 left.Expire(now);
                 right.Expire(now);
+                ExpireRearPaws(now);
                 AdvanceMouse(now);
                 bool hopping = now - hopStarted < HopDuration;
-                if (!left.Active && !right.Active && mouseGrip == 0 && mousePosition == mouseDestination
+                if (!left.Active && !right.Active && !RearPawsActive && mouseGrip == 0 && mousePosition == mouseDestination
                     && now - lastMouseUse > 250 && !settlingMouse && !pendingMouseClick && !hopping) animation.Stop();
                 InvalidateVisual();
             };
@@ -121,10 +123,10 @@ namespace WheekKeys
             };
         }
 
-        private void SetRestPose(bool prone)
+        private void SetRestPose(bool prone, bool drawn, bool compact)
         {
-            Point leftRest = prone ? new Point(210, 205) : new Point(183, 201);
-            Point rightRest = prone ? new Point(244, 203) : new Point(239, 202);
+            Point leftRest = compact ? new Point(152, 210) : drawn ? new Point(172, 215) : prone ? new Point(210, 205) : new Point(183, 201);
+            Point rightRest = compact ? new Point(165, 210) : drawn ? new Point(215, 213) : prone ? new Point(244, 203) : new Point(239, 202);
             if (skin != null)
             {
                 left.Rest = leftRest;
@@ -262,10 +264,15 @@ namespace WheekKeys
             set
             {
                 if (value == null || value == skin) return;
-                if (skin == null || skin.IsProne != value.IsProne) SetRestPose(value.IsProne);
+                bool drawn = value.IsProne && !value.IsCustom;
+                bool compact = drawn && DrawnProneArt.For(value.DrawnArtId ?? value.PixelCoatId).Compact;
+                bool resetPose = skin == null || skin.IsProne != value.IsProne || (drawnProne != null) != drawn
+                    || (drawnProne != null && drawnProne.Compact) != compact;
+                if (resetPose) SetRestPose(value.IsProne, drawn, compact);
                 ApplyPixelSkin(value);
+                if (resetPose) ResetCompactPaws(compact);
                 RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.NearestNeighbor);
-                RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
+                RenderOptions.SetEdgeMode(this, drawn ? EdgeMode.Unspecified : EdgeMode.Aliased);
                 skin = value;
                 mouth.Reset(clock.Elapsed.TotalMilliseconds);
                 settlingMouse = pendingMouseClick = false;
@@ -291,6 +298,7 @@ namespace WheekKeys
         private void ApplyPixelSkin(PetSkin target)
         {
             CoatArt coat = CoatArt.Find(target.PixelCoatId);
+            drawnProne = target.IsProne && !target.IsCustom ? DrawnProneArt.For(target.DrawnArtId ?? target.PixelCoatId) : null;
             string cacheKey = target.Id;
             if (!coatEyes.TryGetValue(cacheKey, out Eyes))
             {
@@ -307,9 +315,9 @@ namespace WheekKeys
                 }
                 coatPaws[cacheKey] = paw;
             }
-            Paw = coatPaws[cacheKey];
-            var fill = new SolidColorBrush(target.CustomFurColor ?? coat.Fur);
-            var edge = new SolidColorBrush(target.CustomInkColor ?? coat.Ink);
+            Paw = drawnProne == null ? coatPaws[cacheKey] : drawnProne.Paw;
+            var fill = new SolidColorBrush(drawnProne == null ? target.CustomFurColor ?? coat.Fur : drawnProne.Fur);
+            var edge = new SolidColorBrush(drawnProne == null ? target.CustomInkColor ?? coat.Ink : drawnProne.Ink);
             fill.Freeze();
             edge.Freeze();
             ForelegFill = fill;
@@ -318,6 +326,7 @@ namespace WheekKeys
 
         private static EyeArt CreateFace(PetSkin skin, CoatArt coat)
         {
+            if (skin.IsProne && !skin.IsCustom) return new EyeArt(DrawnProneArt.For(skin.DrawnArtId ?? skin.PixelCoatId));
             BitmapSource image = (BitmapSource)skin.CustomBody;
             if (image == null)
             {
@@ -336,7 +345,7 @@ namespace WheekKeys
             if (Portraits.TryGetValue(skin.Id, out cached)) return cached;
             EyeArt eyes = CreateFace(skin, CoatArt.Find(skin.PixelCoatId));
             var drawing = new DrawingGroup();
-            using (DrawingContext dc = drawing.Open()) eyes.Draw(dc, new Rect(8, 12, 100, skin.IsProne ? 58 : 104), new Vector());
+            using (DrawingContext dc = drawing.Open()) eyes.Draw(dc, new Rect(8, 12, 100, skin.IsProne ? 100.0 * eyes.Body.PixelHeight / eyes.Body.PixelWidth : 104), new Vector());
             drawing.Freeze();
             var portrait = new DrawingImage(drawing);
             portrait.Freeze();
@@ -350,6 +359,22 @@ namespace WheekKeys
             bool onRight = PixelKeyboardArt.IsRight(scan);
             Stroke hand = onRight ? left : right;
             double now = clock.Elapsed.TotalMilliseconds;
+            if (drawnProne != null && drawnProne.Compact) { PressCompactKey(scan, onRight, now); return; }
+            if (drawnProne != null)
+            {
+                DrawnPose pose = CurrentDrawnPose(now);
+                Point target = PixelKeyboardArt.Target(scan, onRight);
+                Stroke other = onRight ? right : left;
+                double when = now;
+                if (other.Active && other.Started <= now && Math.Abs(target.X - other.Target.X) > 140)
+                    when = Math.Max(now, other.Started + 130);
+                lastMouseUse = lastClick = lastScroll = double.NegativeInfinity;
+                settlingMouse = pendingMouseClick = false;
+                slowMouseUntil = double.NegativeInfinity;
+                hand.Start(when, onRight ? pose.LeftTip : pose.RightTip, target, scan);
+                Wake();
+                return;
+            }
             Point start = hand.Position(now);
             if (onRight)
             {
@@ -369,8 +394,10 @@ namespace WheekKeys
         {
             if (dx == 0 && dy == 0) return;
             RecordActivity();
-            mouseDestination.X = Math.Max(10, Math.Min(46, mouseDestination.X + dx * 0.12));
-            mouseDestination.Y = Math.Max(210, Math.Min(270, mouseDestination.Y + dy * 0.12));
+            mouseDestination.X = drawnProne != null ? Math.Max(22, Math.Min(39, mouseDestination.X + dx * 0.055))
+                : Math.Max(10, Math.Min(46, mouseDestination.X + dx * 0.12));
+            mouseDestination.Y = drawnProne != null ? Math.Max(235, Math.Min(249, mouseDestination.Y + dy * 0.055))
+                : Math.Max(210, Math.Min(270, mouseDestination.Y + dy * 0.12));
             lastMouseUse = clock.Elapsed.TotalMilliseconds;
             double readiness = sleep.MotionReadiness(lastMouseUse);
             if (readiness < 0.999) slowMouseUntil = Math.Max(slowMouseUntil, lastMouseUse + 2400 * (1 - readiness));
@@ -421,6 +448,7 @@ namespace WheekKeys
             double elapsed = Math.Max(0, now - lastFrame);
             lastFrame = now;
             double readiness = sleep.MotionReadiness(now);
+            if (drawnProne != null) { AdvanceDrawnMouse(now, elapsed, readiness); return; }
             mousePosition += (mouseDestination - mousePosition) * (1 - Math.Exp(-elapsed * readiness / (32 + (1 - readiness) * 170)));
             if ((mouseDestination - mousePosition).LengthSquared < 0.01) mousePosition = mouseDestination;
 
@@ -498,6 +526,12 @@ namespace WheekKeys
                 double age = Math.Max(0, now - Started);
                 if (age < 52) return 1 - Smooth(age / 52);
                 return Smooth(Math.Max(0, Math.Min(1, (age - 102) / (SettleTime - 102))));
+            }
+
+            public double RestWeight(double now)
+            {
+                if (!Active) return 1;
+                return Smooth(Math.Max(0, Math.Min(1, (now - Started - 102) / (SettleTime - 102))));
             }
 
             public double Contact(double now)
@@ -578,23 +612,51 @@ namespace WheekKeys
             startle = new Vector(Math.Round(startle.X), Math.Round(startle.Y + dozeNod));
             lp = new Point(Math.Round(lp.X + startle.X * 0.55), Math.Round(lp.Y + startle.Y * 0.55));
             rp = new Point(Math.Round(rp.X + startle.X * 0.55), Math.Round(rp.Y + startle.Y * 0.55));
-            Rect nextBody = skin.IsProne ? new Rect(151, 135, 118, 69) : new Rect(126, 39, 174, 181);
-            nextBody.Offset(lean + startle.X, dip + startle.Y);
+            Rect nextBody = drawnProne != null ? new Rect(135, 208 - drawnProne.BodyHeight, 129, drawnProne.BodyHeight)
+                : skin.IsProne ? new Rect(151, 135, 118, 69) : new Rect(126, 39, 174, 181);
+            DrawnPose drawnPose = new DrawnPose();
+            if (drawnProne != null)
+            {
+                DrawnPose pose = CurrentDrawnPose(now);
+                drawnPose = pose;
+                nextBody = pose.Body;
+                nextBody.Offset(startle.X, startle.Y);
+                lp = pose.LeftTip + startle * 0.55;
+                rp = pose.RightTip + startle * 0.55;
+            }
+            else nextBody.Offset(lean + startle.X, dip + startle.Y);
             SetBodyBounds(nextBody);
             dc.PushTransform(new TranslateTransform(SceneOffsetX, 0));
             int blink = sleep.IsWaking(now) ? 0 : blinkFrame;
-            Eyes.Draw(dc, bodyBounds, headOffset, blink, drowsiness, sleep.EyeScale(now), mouth.Frame, dozeMouth);
-            DrawMouse(dc, click);
-            PixelKeyboardArt.Draw(dc, desk, right.Scan, r, left.Scan, l);
-            // Both forelegs start on the visible chest and pass in front of the desk.
-            DrawForeleg(dc, left.Rest, lp, lean + startle.X, dip + startle.Y);
-            DrawForeleg(dc, right.Rest, rp, lean + startle.X, dip + startle.Y);
-            DrawPaw(dc, lp, false);
-            DrawPaw(dc, rp, true);
+            if (drawnProne != null)
+            {
+                DrawMouse(dc, click);
+                PixelKeyboardArt.Draw(dc, desk, right.Scan, r, left.Scan, l);
+                if (drawnProne.Compact)
+                {
+                    PixelKeyboardArt.DrawPressed(dc, desk, rearLeft.Scan, rearLeft.Contact(now), PixelKeyboardArt.IsRight(rearLeft.Scan));
+                    PixelKeyboardArt.DrawPressed(dc, desk, rearRight.Scan, rearRight.Contact(now), PixelKeyboardArt.IsRight(rearRight.Scan));
+                }
+                if (drawnProne.Compact) DrawCompactFeet(dc, drawnPose, startle, now, true);
+                Eyes.Draw(dc, bodyBounds, headOffset, blink, drowsiness, sleep.EyeScale(now), mouth.Frame, dozeMouth);
+                if (drawnProne.Compact) DrawCompactFeet(dc, drawnPose, startle, now, false);
+                else { DrawDrawnArm(dc, rp, true); DrawDrawnArm(dc, lp, false); }
+            }
+            else
+            {
+                Eyes.Draw(dc, bodyBounds, headOffset, blink, drowsiness, sleep.EyeScale(now), mouth.Frame, dozeMouth);
+                DrawMouse(dc, click);
+                PixelKeyboardArt.Draw(dc, desk, right.Scan, r, left.Scan, l);
+                // Both forelegs start on the visible chest and pass in front of the desk.
+                DrawForeleg(dc, left.Rest, lp, lean + startle.X, dip + startle.Y);
+                DrawForeleg(dc, right.Rest, rp, lean + startle.X, dip + startle.Y);
+                DrawPaw(dc, lp, false);
+                DrawPaw(dc, rp, true);
+            }
             if (showKeyLabels)
             {
-                DrawBubble(dc, desk, left, now, false);
-                DrawBubble(dc, desk, right, now, true);
+                if (drawnProne != null && drawnProne.Compact) DrawCompactBubbles(dc, now);
+                else { DrawBubble(dc, desk, left, now, false); DrawBubble(dc, desk, right, now, true); }
             }
             sleep.Draw(dc, new Point(bodyBounds.Right + 5, bodyBounds.Top + 32), now, true);
             dc.Pop();
@@ -619,6 +681,56 @@ namespace WheekKeys
             dc.DrawImage(Paw, skin.IsProne ? new Rect(-9, -17, 18, 17) : new Rect(-12, -24, 25, 23));
             if (!rightSide) dc.Pop();
             dc.Pop();
+        }
+
+        private void DrawDrawnArm(DrawingContext dc, Point tip, bool far, int foot = -1)
+        {
+            double grip = far || foot >= 2 ? 0 : Smooth(mouseGrip);
+            double anchorX = bodyBounds.X + (far ? 75 : 36);
+            double rootWidth = drawnProne.Compact ? 4.0 : 5.8;
+            Color fur = foot < 0 ? drawnProne.Fur : drawnProne.FootColor(foot);
+            Color rootColor = fur;
+            Point shoulder = drawnProne.Compact ? drawnProne.ArmJoin(bodyBounds, tip.X, rootWidth + 2, out rootColor)
+                : new Point(anchorX + Math.Max(-13, Math.Min(13, (tip.X - anchorX) * 0.30)), bodyBounds.Y + 70);
+            Vector reach = tip - shoulder;
+            double angle = Math.Max(-0.58, Math.Min(0.58, -Math.Atan2(reach.X, reach.Y)));
+            angle += (0.52 - angle) * grip;
+            Vector down = new Vector(-Math.Sin(angle), Math.Cos(angle));
+            Vector side = new Vector(down.Y, -down.X);
+            Point palm = tip - down * (5.8 - 0.6 * grip);
+            Vector axis = palm - shoulder;
+            if (axis.Length < 1) return;
+            Vector normal = new Vector(axis.Y / axis.Length, -axis.X / axis.Length);
+            Point bend = shoulder + axis * 0.55 + new Vector(far ? 2.0 : -2.0, -1.0);
+            double width = (drawnProne.Compact ? 4.2 : 6.5) - 0.6 * grip;
+            double armWidth = drawnProne.Compact ? 3.8 : 5.4;
+            var hand = new StreamGeometry();
+            using (StreamGeometryContext path = hand.Open())
+            {
+                path.BeginFigure(shoulder - normal * rootWidth, true, false);
+                path.QuadraticBezierTo(bend - normal * armWidth, palm - side * width, true, true);
+                path.BezierTo(palm - side * (width + 0.6) + down * 3,
+                    tip - side * (width - 1) + down * 0.8, tip + down * 0.8, true, true);
+                path.BezierTo(tip + side * (width - 1) + down * 0.8,
+                    palm + side * (width + 0.6) + down * 3, palm + side * width, true, true);
+                path.QuadraticBezierTo(bend + normal * armWidth, shoulder + normal * rootWidth, true, true);
+                path.LineTo(shoulder - normal * rootWidth, false, false);
+            }
+            var fill = new LinearGradientBrush { StartPoint = shoulder, EndPoint = tip, MappingMode = BrushMappingMode.Absolute };
+            fill.GradientStops.Add(new GradientStop(Color.FromArgb(0, rootColor.R, rootColor.G, rootColor.B), 0));
+            fill.GradientStops.Add(new GradientStop(rootColor, Math.Min(0.25, 4 / Math.Max(1, reach.Length))));
+            fill.GradientStops.Add(new GradientStop(rootColor, Math.Min(0.8, 10 / Math.Max(1, reach.Length))));
+            fill.GradientStops.Add(new GradientStop(fur, 1));
+            dc.DrawGeometry(fill, null, hand);
+            var outline = new Pen(ForelegEdge, 2.8) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
+            if (drawnProne.Compact && far) dc.DrawGeometry(null, outline, hand);
+            else if (drawnProne.Compact) drawnProne.DrawJoinedPawOutline(dc, bodyBounds, hand, outline);
+            else
+            {
+                dc.PushClip(drawnProne.OutsideBody(bodyBounds));
+                dc.DrawGeometry(null, outline, hand);
+                dc.Pop();
+            }
         }
 
         private void DrawForeleg(DrawingContext dc, Point rest, Point tip, double lean, double dip)

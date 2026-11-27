@@ -199,5 +199,13 @@ namespace WheekKeys
             if (rightAmount > 0.25 && (rightKey != leftKey || leftAmount <= 0.25))
                 dc.DrawImage(atlas.Pressed[rightKey.Scan], rightKey.Bounds);
         }
+
+        public static void DrawPressed(DrawingContext dc, DeskSkin desk, int scan, double amount, bool right)
+        {
+            if (amount <= 0.25) return;
+            ThemeAtlas atlas = GetAtlas(desk);
+            KeySpec key = FindKey(scan, right);
+            dc.DrawImage(atlas.Pressed[key.Scan], key.Bounds);
+        }
     }
 }
