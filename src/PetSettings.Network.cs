@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Windows;
@@ -36,7 +37,16 @@ namespace WheekKeys
         private readonly DockPanel invitation = new DockPanel();
         private readonly TextBox roomInput = new TextBox();
         private readonly TextBlock invitationCode = Label(14, Ink);
-        private readonly TextBlock networkTitle = Label(15, Ink);
+        private readonly ComboBox visibility = new ComboBox { Width = 66, Margin = new Thickness(0, 0, 6, 0) };
+        private readonly ComboBox publicRooms = new ComboBox { DisplayMemberPath = "Label", MinWidth = 130 };
+        private readonly StackPanel discovery = new StackPanel { Visibility = Visibility.Collapsed };
+        private readonly TextBlock discoveryStatus = Label(10.5, Muted);
+        private Button joinPublic;
+        private RoomDirectory roomDirectory;
+        private RoomDirectory.Entry[] publicEntries = new RoomDirectory.Entry[0];
+        private double nextDirectoryRefresh;
+        private ToggleButton shareSwitch;
+        private bool refreshingShareSwitch;
         private Button create, leave, copy;
         private string formMessage;
 
@@ -52,9 +62,11 @@ namespace WheekKeys
             DockPanel.SetDock(controls, Dock.Top);
             page.Children.Add(controls);
             DockPanel heading = new DockPanel();
-            create = ActionButton("创建房间", SageSoft, delegate { EnterRoom(RoomTransport.CreateCode()); });
+            create = ActionButton("创建房间", SageSoft, delegate {
+                EnterRoom(RoomTransport.CreateCode(), true, visibility.SelectedIndex == 1, null);
+            });
             leave = ActionButton("退出房间", Paper2, delegate {
-                owner.SetNetworking(false);
+                owner.Network.Dispose();
                 formMessage = null;
                 RefreshActivity();
             });
@@ -62,6 +74,15 @@ namespace WheekKeys
             DockPanel.SetDock(leave, Dock.Right);
             heading.Children.Add(create);
             heading.Children.Add(leave);
+            visibility.Items.Add("私密");
+            visibility.Items.Add("公开");
+            visibility.SelectedIndex = 0;
+            visibility.ToolTip = "私密房间通过房间码邀请，公开房间可被发现。每间最多 16 人。";
+            AutomationProperties.SetName(visibility, "房间可见性");
+            DockPanel.SetDock(visibility, Dock.Right);
+            heading.Children.Add(visibility);
+            TextBlock networkTitle = Label(15, Ink);
+            networkTitle.Text = "好友房间";
             networkTitle.FontWeight = FontWeights.Bold;
             heading.Children.Add(networkTitle);
             controls.Children.Add(heading);
@@ -69,8 +90,10 @@ namespace WheekKeys
             state.Children.Add(statusDot);
             state.Children.Add(connection);
             controls.Children.Add(state);
-            controls.Children.Add(BuildToggleRow("同步按键和鼠标动作", MakeSwitch(owner.Network.ShareActivity,
-                delegate(bool value) { owner.Network.ShareActivity = value; })));
+            shareSwitch = MakeSwitch(owner.Network.ShareActivity, delegate(bool value) {
+                if (!refreshingShareSwitch) owner.Network.ShareActivity = value;
+            });
+            controls.Children.Add(BuildToggleRow("同步按键和鼠标动作", shareSwitch));
             DockPanel join = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
             Button joinButton = ActionButton("加入", Paper2, JoinTypedRoom);
             joinButton.Margin = new Thickness(5, 0, 0, 0);
@@ -100,17 +123,32 @@ namespace WheekKeys
             join.Children.Add(new Border { Child = field, BorderBrush = Line, BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6), Padding = new Thickness(7, 0, 3, 0), Background = Brushes.WhiteSmoke });
             lobby.Children.Add(join);
-            Button lan = ActionButton("或使用局域网发现", Brushes.Transparent, delegate {
-                formMessage = null;
-                owner.SetNetworking(true);
-                RefreshActivity();
+            Button discover = ActionButton("发现公开房间", Paper2, delegate {
+                if (roomDirectory != null) StopRoomDiscovery();
+                else
+                {
+                    roomDirectory = new RoomDirectory();
+                    discovery.Visibility = Visibility.Visible;
+                    RefreshRoomDiscovery();
+                }
             });
-            lan.Foreground = Muted;
-            ((TextBlock)lan.Content).Foreground = Muted;
-            lan.HorizontalAlignment = HorizontalAlignment.Left;
-            lan.BorderThickness = new Thickness(0);
-            lan.Padding = new Thickness(0);
-            lobby.Children.Add(lan);
+            discover.HorizontalAlignment = HorizontalAlignment.Left;
+            discover.Margin = new Thickness(0, 4, 0, 0);
+            lobby.Children.Add(discover);
+            DockPanel pickRoom = new DockPanel { Margin = new Thickness(0, 4, 0, 0) };
+            joinPublic = ActionButton("加入", Paper2, delegate {
+                RoomDirectory.Entry entry = publicRooms.SelectedItem as RoomDirectory.Entry;
+                if (entry != null && entry.Count < RoomMembership.Capacity) EnterRoom(entry.Code, false, true, entry.Host);
+            });
+            joinPublic.Margin = new Thickness(5, 0, 0, 0);
+            DockPanel.SetDock(joinPublic, Dock.Right);
+            pickRoom.Children.Add(joinPublic);
+            publicRooms.SelectionChanged += delegate { UpdatePublicJoin(); };
+            AutomationProperties.SetName(publicRooms, "公开房间列表");
+            pickRoom.Children.Add(publicRooms);
+            discovery.Children.Add(pickRoom);
+            discovery.Children.Add(discoveryStatus);
+            lobby.Children.Add(discovery);
             controls.Children.Add(lobby);
             invitation.Margin = new Thickness(0, 8, 0, 1);
             copy = ActionButton("复制房间码", Paper2, CopyCode);
@@ -168,16 +206,53 @@ namespace WheekKeys
                 roomInput.SelectAll();
                 return;
             }
-            EnterRoom(code);
+            EnterRoom(code, false, false, null);
         }
 
-        private void EnterRoom(string code)
+        private void EnterRoom(string code, bool hosting, bool isPublic, string expectedHost)
         {
-            owner.Network.EnterRoom(code);
+            StopRoomDiscovery();
+            owner.Network.EnterRoom(code, hosting, isPublic, expectedHost);
             roomInput.Clear();
             formMessage = null;
             ((TextBlock)copy.Content).Text = "复制房间码";
             RefreshActivity();
+        }
+
+        private void StopRoomDiscovery()
+        {
+            if (roomDirectory == null) return;
+            roomDirectory.Dispose();
+            roomDirectory = null;
+            nextDirectoryRefresh = 0;
+            publicRooms.ItemsSource = publicEntries = new RoomDirectory.Entry[0];
+            discovery.Visibility = Visibility.Collapsed;
+        }
+
+        private void RefreshRoomDiscovery()
+        {
+            if (roomDirectory == null || publicRooms.IsDropDownOpen) return;
+            double now = (double)Stopwatch.GetTimestamp() / Stopwatch.Frequency;
+            if (now < nextDirectoryRefresh) return;
+            nextDirectoryRefresh = now + 0.35;
+            RoomDirectory.Entry[] entries = roomDirectory.Refresh(now);
+            if (!entries.Select(entry => entry.Code + entry.Host + entry.Label)
+                .SequenceEqual(publicEntries.Select(entry => entry.Code + entry.Host + entry.Label)))
+            {
+                RoomDirectory.Entry selected = publicRooms.SelectedItem as RoomDirectory.Entry;
+                publicRooms.ItemsSource = publicEntries = entries;
+                publicRooms.SelectedItem = entries.FirstOrDefault(entry => selected != null && entry.Code == selected.Code)
+                    ?? entries.FirstOrDefault();
+            }
+            discoveryStatus.Text = !roomDirectory.Connected ? roomDirectory.Status :
+                entries.Length == 0 ? "正在寻找公开房间…" : entries.Length + " 个公开房间";
+            UpdatePublicJoin();
+        }
+
+        private void UpdatePublicJoin()
+        {
+            RoomDirectory.Entry entry = publicRooms.SelectedItem as RoomDirectory.Entry;
+            joinPublic.IsEnabled = entry != null && entry.Count < RoomMembership.Capacity;
         }
 
         private void CopyCode()
@@ -286,23 +361,24 @@ namespace WheekKeys
         {
             if (networkPage == null || networkPage.Visibility != Visibility.Visible) return;
             LocalPeers network = owner.Network;
-            bool inRoom = network.RoomCode != null;
-            bool inLan = network.Enabled && !inRoom;
-            lobby.Visibility = create.Visibility = network.Enabled ? Visibility.Collapsed : Visibility.Visible;
-            leave.Visibility = network.Enabled ? Visibility.Visible : Visibility.Collapsed;
-            string leaveLabel = inLan ? "关闭发现" : "退出房间";
-            ((TextBlock)leave.Content).Text = leaveLabel;
-            AutomationProperties.SetName(leave, leaveLabel);
-            invitation.Visibility = inRoom ? Visibility.Visible : Visibility.Collapsed;
-            networkTitle.Text = inLan ? "局域网发现" : "好友房间";
+            bool inRoom = network.Enabled;
+            lobby.Visibility = create.Visibility = inRoom ? Visibility.Collapsed : Visibility.Visible;
+            visibility.Visibility = create.Visibility;
+            RefreshRoomDiscovery();
+            refreshingShareSwitch = true;
+            shareSwitch.IsChecked = network.ShareActivity;
+            shareSwitch.IsEnabled = network.ShareActivityAvailable;
+            refreshingShareSwitch = false;
+            leave.Visibility = inRoom ? Visibility.Visible : Visibility.Collapsed;
+            invitation.Visibility = network.RoomConnected ? Visibility.Visible : Visibility.Collapsed;
             if (inRoom)
                 invitationCode.Text = string.Join("-", Enumerable.Range(0, 4).Select(i => network.RoomCode.Substring(i * 5, 5)));
             int count = network.Members.Count;
-            connection.Text = inRoom ? network.RoomStatus : inLan ? "正在发现同一网络中的伙伴" : "创建房间，把房间码发给异地的朋友。";
-            connection.Foreground = inLan || network.RoomConnected ? OnlineInk : Muted;
+            connection.Text = inRoom ? network.RoomStatus : "每间最多 16 人，私密房间用房间码邀请。";
+            connection.Foreground = network.RoomConnected ? OnlineInk : Muted;
             statusDot.Fill = connection.Foreground;
-            statusDot.Visibility = network.Enabled ? Visibility.Visible : Visibility.Collapsed;
-            notice.Text = formMessage ?? network.Problem;
+            statusDot.Visibility = inRoom ? Visibility.Visible : Visibility.Collapsed;
+            notice.Text = formMessage;
             notice.Visibility = string.IsNullOrEmpty(notice.Text) ? Visibility.Collapsed : Visibility.Visible;
             selfName.Text = string.IsNullOrEmpty(owner.Nickname) ? "我的" + owner.ActiveSkin.Name : owner.Nickname;
             selfName.ToolTip = selfName.Text + " · " + owner.ActiveSkin.Name;
@@ -310,12 +386,12 @@ namespace WheekKeys
             SetCount(selfKeys, owner.KeyCount);
             SetCount(selfClicks, owner.ClickCount);
             rosterTitle.Text = count == 0 ? "在线伙伴" : "在线伙伴 · " + count;
-            rosterHeader.Visibility = network.Enabled ? Visibility.Visible : Visibility.Collapsed;
+            rosterHeader.Visibility = inRoom ? Visibility.Visible : Visibility.Collapsed;
             for (int i = 1; i < rosterHeader.Children.Count; i++)
                 rosterHeader.Children[i].Visibility = count == 0 ? Visibility.Hidden : Visibility.Visible;
-            emptyHint.Visibility = (inLan || network.RoomConnected) && count == 0 && string.IsNullOrEmpty(network.Problem)
+            emptyHint.Visibility = network.RoomConnected && count == 0
                 ? Visibility.Visible : Visibility.Collapsed;
-            emptyHint.Text = inRoom ? "把上方房间码发给朋友，等对方加入后，小猪和键盘就会出现在桌面。" : "让朋友连上同一局域网，再打开局域网发现。";
+            emptyHint.Text = network.RoomPublic ? "其他人可以从公开房间列表加入。" : "把房间码发给朋友，邀请对方加入。";
             foreach (string id in partnerRows.Keys.Where(id => !network.Members.ContainsKey(id)).ToArray())
             {
                 roster.Children.Remove(partnerRows[id]);

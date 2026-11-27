@@ -267,6 +267,19 @@ namespace WheekKeys
             await updater.CheckAsync();
         }
 
+        internal void OpenFeedback()
+        {
+            const string url = "https://github.com/gwtt/guinea-pig-keyboard/issues/new/choose";
+            try
+            {
+                using (Process process = Process.Start(new ProcessStartInfo(url) { UseShellExecute = true })) { }
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                System.Windows.MessageBox.Show("无法打开浏览器，请在浏览器访问：" + url, "反馈问题");
+            }
+        }
+
         private void OpenSettingsAtCursor()
         {
             Drawing.Point cursor = Forms.Cursor.Position;
@@ -341,16 +354,6 @@ namespace WheekKeys
             return true;
         }
 
-        internal void SetNetworking(bool value)
-        {
-            if (value)
-            {
-                peers.Start();
-                peers.Tick(clock.Elapsed.TotalSeconds, scene.Skin, keyCount, clickCount, nickname);
-            }
-            else peers.Dispose();
-        }
-
         internal void SetClickThrough(bool value)
         {
             clickThrough = value;
@@ -402,7 +405,6 @@ namespace WheekKeys
                 new MenuAction("缩小", delegate { SetWidth(Width - 40); }),
                 new MenuAction(scene.ShowKeyLabels ? "隐藏按键气泡" : "显示按键气泡", delegate { SetLabels(!scene.ShowKeyLabels); }),
                 new MenuAction(clickThrough ? "关闭鼠标穿透" : "开启鼠标穿透（可从托盘关闭）", delegate { SetClickThrough(!clickThrough); }),
-                new MenuAction("回到右下角", MoveToCorner),
                 new MenuAction("退出", Close)
             };
         }
@@ -447,18 +449,17 @@ namespace WheekKeys
             if (old != null) old.Dispose();
         }
 
-        internal void MoveToCorner()
+        private void PlaceAtDefaultPosition()
         {
             Rect area = SystemParameters.WorkArea;
             Left = Math.Max(area.Left, area.Right - Width - 12);
             Top = Math.Max(area.Top, area.Bottom - Height - 12);
             placement.IsDockedToTaskbar = false;
-            SaveSettings();
         }
 
         private void RestoreSettings()
         {
-            MoveToCorner();
+            PlaceAtDefaultPosition();
             try
             {
                 if (!File.Exists(settingsPath)) return;
@@ -487,7 +488,7 @@ namespace WheekKeys
                 if (values.Length > 10 && bool.TryParse(values[10], out docked)) placement.IsDockedToTaskbar = docked;
                 if (values.Length > 11) scene.Desk = DeskSkin.FromId(values[11]);
             }
-            catch { MoveToCorner(); }
+            catch { PlaceAtDefaultPosition(); }
         }
 
         private bool SaveSettings()

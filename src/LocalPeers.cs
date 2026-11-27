@@ -2,31 +2,25 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
-using System.Net;
-using System.Net.NetworkInformation;
-using System.Net.Sockets;
-using System.Text;
 
 namespace WheekKeys
 {
     internal sealed class LocalPeers : IDisposable
     {
-        private const int Port = 41684;
         private readonly SortedDictionary<string, Peer> peers = new SortedDictionary<string, Peer>(StringComparer.Ordinal);
-        private readonly byte[] buffer = new byte[129];
-        private readonly List<IPEndPoint> targets = new List<IPEndPoint>();
         private readonly Queue<PeerAction> pendingActions = new Queue<PeerAction>();
         private readonly Queue<ReceivedInteraction> receivedInteractions = new Queue<ReceivedInteraction>();
         private readonly Dictionary<string, double> nextInteractionByTarget = new Dictionary<string, double>(StringComparer.Ordinal);
-        private Socket socket;
         private RoomTransport room;
-        private readonly string session = Guid.NewGuid().ToString("N");
-        private double nextSend, nextInterfaceCheck;
-        private string problem;
+        private RoomMembership membership;
+        private RoomDirectory directory;
+        private string session = Guid.NewGuid().ToString("N");
+        private double nextSend;
         private double nextActionSend;
         private long actionSequence;
         private long interactionSequence;
         private bool shareActivity = true;
+        private bool sharePublicActivity;
 
         internal struct PeerAction
         {
@@ -78,19 +72,30 @@ namespace WheekKeys
             }
         }
 
-        public bool Enabled { get { return socket != null || room != null; } }
+        public bool Enabled { get { return room != null; } }
         public string RoomCode { get; private set; }
-        public bool RoomConnected { get { return room != null && room.Connected; } }
-        public string RoomStatus { get { return room == null ? null : room.Status; } }
-        public string Problem { get { return problem; } }
+        public bool RoomConnected { get { return room != null && room.Connected && membership.Joined; } }
+        public string RoomStatus
+        {
+            get
+            {
+                if (room == null || !room.Connected) return room == null ? null : room.Status;
+                if (membership.Joined) return (membership.IsPublic ? "公开房间" : "私密房间") + " · " +
+                    membership.Count + "/" + RoomMembership.Capacity;
+                return membership.Count == RoomMembership.Capacity ? "房间已满，等待空位" : "等待房主确认";
+            }
+        }
+        public bool RoomPublic { get { return membership != null && membership.IsPublic; } }
+        public bool ShareActivityAvailable { get { return membership == null || membership.VisibilityKnown; } }
         public IReadOnlyDictionary<string, Peer> Members { get { return peers; } }
         public bool ShareActivity
         {
-            get { return shareActivity; }
+            get { return ShareActivityAvailable && (RoomPublic ? sharePublicActivity : shareActivity); }
             set
             {
-                if (shareActivity == value) return;
-                shareActivity = value;
+                if (!ShareActivityAvailable || ShareActivity == value) return;
+                if (RoomPublic) sharePublicActivity = value;
+                else shareActivity = value;
                 pendingActions.Clear();
                 RefreshState();
             }
@@ -107,18 +112,14 @@ namespace WheekKeys
 
         public bool TrySendInteraction(string target, string kind, double now)
         {
-            if (!Enabled || (room != null && !room.Connected) || target == null ||
+            if (!RoomConnected || target == null ||
                 (target == "*" ? peers.Count == 0 : !peers.ContainsKey(target)) ||
                 !ValidInteraction(kind) || interactionSequence == long.MaxValue) return false;
             double next;
             if (nextInteractionByTarget.TryGetValue(target, out next) && now < next) return false;
             string message = "WI1|" + session + "|" + target + "|" +
                 (interactionSequence + 1).ToString(CultureInfo.InvariantCulture) + "|" + kind;
-            if (room == null)
-            {
-                if (!Broadcast(now, message)) return false;
-            }
-            else room.Publish(message);
+            room.Publish(message);
             interactionSequence++;
             nextInteractionByTarget[target] = now + 1.2;
             return true;
@@ -137,70 +138,50 @@ namespace WheekKeys
 
         private void RecordAction(char kind, int scan, double now)
         {
-            if (!Enabled || !shareActivity || (room != null && !room.Connected)) return;
+            if (!ShareActivity || !RoomConnected) return;
             if (pendingActions.Count >= 64) pendingActions.Dequeue();
             pendingActions.Enqueue(new PeerAction { Kind = kind, Scan = scan, Received = now });
         }
 
-        public void EnterRoom(string code)
+        public void EnterRoom(string code, bool hosting, bool isPublic, string expectedHost)
         {
             Dispose();
+            session = Guid.NewGuid().ToString("N");
+            membership = new RoomMembership(session, hosting, isPublic, expectedHost);
             room = new RoomTransport(code);
+            if (hosting && isPublic) directory = new RoomDirectory();
             RoomCode = code;
             nextSend = 0;
-        }
-
-        public void Start()
-        {
-            if (Enabled) return;
-            try
-            {
-                socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-                socket.EnableBroadcast = true;
-                socket.Ttl = 1;
-                socket.Bind(new IPEndPoint(IPAddress.Any, Port));
-                socket.Blocking = false;
-                nextSend = nextInterfaceCheck = 0;
-                problem = null;
-            }
-            catch (SocketException e) { Fail(e); }
         }
 
         public void Dispose()
         {
             if (room != null) room.Dispose();
+            if (directory != null) directory.Dispose();
             room = null;
+            directory = null;
+            membership = null;
+            sharePublicActivity = false;
             RoomCode = null;
-            if (socket != null) socket.Close();
-            socket = null;
             peers.Clear();
-            targets.Clear();
             pendingActions.Clear();
             receivedInteractions.Clear();
             nextInteractionByTarget.Clear();
             nextActionSend = 0;
-            problem = null;
-        }
-
-        private void Fail(SocketException error)
-        {
-            Dispose();
-            problem = error.SocketErrorCode == SocketError.AddressAlreadyInUse
-                ? "联机端口已占用，请稍后重试" : "局域网连接失败，请重新开启";
         }
 
         public void Tick(double now, PetSkin skin, long keys, long clicks, string nickname)
         {
-            if (!Enabled) return;
-            double timeout = room == null ? 8 : 20;
-            foreach (string id in peers.Where(p => now - p.Value.Seen >= timeout).Select(p => p.Key).ToArray())
+            if (room == null) return;
+            TickRoom(now, nickname);
+            foreach (string id in peers.Where(p => now - p.Value.Seen >= 20 ||
+                !membership.Contains(p.Key)).Select(p => p.Key).ToArray())
             {
                 peers.Remove(id);
                 nextInteractionByTarget.Remove(id);
             }
-            if (room != null && !room.Connected)
+            if (!RoomConnected)
             {
-                peers.Clear();
                 pendingActions.Clear();
                 receivedInteractions.Clear();
                 nextInteractionByTarget.Clear();
@@ -210,49 +191,43 @@ namespace WheekKeys
             if (now >= nextSend)
             {
                 string message = string.Format(CultureInfo.InvariantCulture, "WK1|{0}|{1}|{2}|{3}", session, skin.NetworkId, keys, clicks);
-                Publish(now, message);
-                Publish(now, "WS1|" + session + "|" + skin.Id + "|" + (shareActivity ? "1" : "0"));
+                room.Publish(message);
+                room.Publish("WS1|" + session + "|" + skin.Id + "|" + (ShareActivity ? "1" : "0"));
                 string normalized;
                 if (PetName.TryNormalize(nickname, out normalized) && normalized == nickname)
                 {
                     string nameMessage = "WN1|" + session + "|" + PetName.Encode(nickname);
-                    Publish(now, nameMessage);
+                    room.Publish(nameMessage);
                 }
-                nextSend = now + (room == null ? 2 : 5);
+                nextSend = now + 5;
             }
             FlushActions(now);
-            if (room != null)
-            {
-                string message;
-                for (int i = 0; i < 32 && room.TryReceive(out message); i++) ReadPeer(message, now);
-                return;
-            }
-            for (int i = 0; i < 32; i++)
-            {
-                try
-                {
-                    if (!socket.Poll(0, SelectMode.SelectRead)) break;
-                    int size = socket.Receive(buffer);
-                    if (size <= 128) ReadPeer(Encoding.ASCII.GetString(buffer, 0, size), now);
-                }
-                catch (SocketException e)
-                {
-                    if (e.SocketErrorCode == SocketError.MessageSize || e.SocketErrorCode == SocketError.ConnectionReset) continue;
-                    if (e.SocketErrorCode != SocketError.WouldBlock) Fail(e);
-                    break;
-                }
-            }
         }
 
-        private void Publish(double now, string message)
+        private void TickRoom(double now, string nickname)
         {
-            if (room == null) Broadcast(now, message);
-            else room.Publish(message);
+            if (!room.Connected)
+            {
+                membership.Disconnected();
+                peers.Clear();
+                return;
+            }
+            membership.Expire(now);
+            string message;
+            for (int i = 0; i < 32 && room.TryReceive(out message); i++)
+            {
+                string[] fields = message.Split('|');
+                if (fields[0] == "WJ2" || fields[0] == "WM2") membership.Receive(fields, now);
+                else if (fields.Length >= 2 && membership.Contains(fields[1])) ReadPeer(message, now);
+            }
+            string control = membership.NextPacket(now);
+            if (control != null) room.Publish(control);
+            if (directory != null) directory.Advertise(now, RoomCode, session, membership.Count, nickname);
         }
 
         private void FlushActions(double now)
         {
-            if (!shareActivity || now < nextActionSend || pendingActions.Count == 0 || actionSequence == long.MaxValue) return;
+            if (!ShareActivity || now < nextActionSend || pendingActions.Count == 0 || actionSequence == long.MaxValue) return;
             List<string> actions = new List<string>();
             while (pendingActions.Count > 0 && actions.Count < 12)
             {
@@ -262,49 +237,8 @@ namespace WheekKeys
             }
             if (actions.Count == 0) return;
             actionSequence++;
-            Publish(now, "WA1|" + session + "|" + actionSequence.ToString(CultureInfo.InvariantCulture) + "|" + string.Join(",", actions));
+            room.Publish("WA1|" + session + "|" + actionSequence.ToString(CultureInfo.InvariantCulture) + "|" + string.Join(",", actions));
             nextActionSend = now + 0.03;
-        }
-
-        private bool Broadcast(double now, string message)
-        {
-            if (now >= nextInterfaceCheck)
-            {
-                FindBroadcastTargets();
-                nextInterfaceCheck = now + 10;
-            }
-            byte[] packet = Encoding.ASCII.GetBytes(message);
-            bool sent = false;
-            foreach (IPEndPoint target in targets)
-            {
-                try { socket.SendTo(packet, target); sent = true; }
-                catch (SocketException) { }
-            }
-            problem = sent ? null : "等待可用的局域网连接…";
-            return sent;
-        }
-
-        private void FindBroadcastTargets()
-        {
-            targets.Clear();
-            try
-            {
-                foreach (NetworkInterface nic in NetworkInterface.GetAllNetworkInterfaces())
-                {
-                    if (nic.OperationalStatus != OperationalStatus.Up || nic.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
-                        nic.NetworkInterfaceType == NetworkInterfaceType.Tunnel) continue;
-                    foreach (UnicastIPAddressInformation ip in nic.GetIPProperties().UnicastAddresses)
-                    {
-                        if (ip.Address.AddressFamily != AddressFamily.InterNetwork || ip.IPv4Mask == null) continue;
-                        byte[] addr = ip.Address.GetAddressBytes(), mask = ip.IPv4Mask.GetAddressBytes();
-                        if (mask[0] == 0 || mask[3] >= 254) continue;
-                        for (int i = 0; i < addr.Length; i++) addr[i] |= (byte)~mask[i];
-                        IPEndPoint target = new IPEndPoint(new IPAddress(addr), Port);
-                        if (!targets.Contains(target)) targets.Add(target);
-                    }
-                }
-            }
-            catch (NetworkInformationException) { }
         }
 
         private void ReadPeer(string message, double now)
@@ -409,7 +343,7 @@ namespace WheekKeys
 
         private static bool ValidId(string id)
         {
-            return id.Length == 32 && id.All(c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
+            return RoomMembership.ValidId(id);
         }
 
         internal static bool TryCount(string value, out long result)

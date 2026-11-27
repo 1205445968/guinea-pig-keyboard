@@ -7,7 +7,6 @@ using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Documents;
 using System.Windows.Threading;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -163,19 +162,21 @@ internal static class PixelSkinSmokeTest
 
     private static void CheckSettingsLabels(Window settings, Assembly app, object owner)
     {
-        var subtitle = LogicalElements(settings).OfType<TextBlock>().First(element => element.Inlines.OfType<Run>().Any(run => run.Text == "桌宠设置"));
+        TextBlock[] texts = LogicalElements(settings).OfType<TextBlock>().ToArray();
+        TextBlock title = texts.Single(element => element.Text == "豚鼠键盘");
         string version = app.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion;
-        Run[] labels = subtitle.Inlines.OfType<Run>().ToArray();
-        Check(labels.Length == 2 && labels[0].Text == "桌宠设置", "settings header text");
-        Run versionLabel = labels[1];
-        Check(versionLabel.Text.Trim() == "v" + version, "settings label uses the product version");
-        Check(versionLabel.FontSize < subtitle.FontSize && ((SolidColorBrush)versionLabel.Foreground).Color == Colors.Gray,
+        TextBlock versionLabel = texts.Single(element => element.Text == "v" + version);
+        Check(!texts.Any(element => element.Text.Contains("桌宠设置")), "header omits the settings subtitle");
+        Check(versionLabel.FontSize < title.FontSize && ((SolidColorBrush)versionLabel.Foreground).Color == Colors.Gray,
             "settings version label appears in smaller gray text");
         Button update = LogicalElements(settings).OfType<Button>().Single(button => System.Windows.Automation.AutomationProperties.GetAutomationId(button) == "install-update");
         Check(update.Visibility == Visibility.Collapsed, "update button hidden initially");
-        Check(Object.ReferenceEquals(LogicalTreeHelper.GetParent(subtitle), LogicalTreeHelper.GetParent(update)), "update button shares subtitle row");
+        Check(Object.ReferenceEquals(LogicalTreeHelper.GetParent(title), LogicalTreeHelper.GetParent(update)), "update button is on the title row");
+        Check(!Object.ReferenceEquals(LogicalTreeHelper.GetParent(versionLabel), LogicalTreeHelper.GetParent(update)), "version has its own row");
         Check(ButtonText(update) == "更新到最新版本", "fixed update button text");
         Check(!LogicalElements(settings).OfType<Button>().Any(button => ButtonText(button) == "检查更新"), "no manual update check button");
+        Check(LogicalElements(settings).OfType<Button>().Any(button => ButtonText(button) == "反馈问题"), "settings feedback entry");
+        Check(!LogicalElements(settings).OfType<Button>().Any(button => ButtonText(button) == "回到右下角"), "no move-to-corner setting");
         Button decrease = LogicalElements(settings).OfType<Button>().Single(button => System.Windows.Automation.AutomationProperties.GetAutomationId(button) == "size-decrease");
         var sizeRow = LogicalTreeHelper.GetParent(decrease) as StackPanel;
         Check(sizeRow != null && sizeRow.Orientation == Orientation.Horizontal && sizeRow.HorizontalAlignment == HorizontalAlignment.Left, "size controls left aligned");
@@ -194,6 +195,10 @@ internal static class PixelSkinSmokeTest
         Check(update.Visibility == Visibility.Collapsed, "update button hidden after release removed");
         Check(!LogicalText(settings).Any(text => text.Contains("搜狗")), "no Sogou hiding setting");
         var network = (DockPanel)Field(settings, "networkPage");
+        var privacy = LogicalElements(network).OfType<ComboBox>().Single(box => box.Items.Count == 2);
+        Check((string)privacy.SelectedItem == "私密" && (string)privacy.Items[1] == "公开", "private room selected by default");
+        Check(LogicalElements(network).OfType<Button>().Any(button => ButtonText(button) == "发现公开房间"), "public room discovery entry");
+        Check(!LogicalElements(network).OfType<Button>().Any(button => ButtonText(button).Contains("局域网")), "no LAN discovery entry");
         var controls = (StackPanel)network.Children[0];
         Check(!controls.Children.OfType<TextBlock>().Any(label => label.Text.Contains("联机时会共享具体按键")), "removed network paragraph");
     }

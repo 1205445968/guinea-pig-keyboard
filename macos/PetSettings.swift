@@ -99,11 +99,10 @@ final class PetSettingsViewController: NSViewController {
     var onClickThroughChange: ((Bool) -> Void)?
     var onLoginAtStartupChange: ((Bool) -> Void)?
     var onShareActivityChange: ((Bool) -> Void)?
-    var onNetworkingChange: ((Bool) -> Void)?
-    var onCreateRoom: (() -> Void)?
+    var onCreateRoom: ((Bool) -> Void)?
     var onJoinRoom: ((String) -> Void)?
+    var onJoinPublicRoom: ((RoomDirectory.Entry) -> Void)?
     var onExitRoom: (() -> Void)?
-    var onReturnToCorner: (() -> Void)?
     var onQuit: (() -> Void)?
     var onClose: (() -> Void)?
     var onDownloadUpdate: (() -> Void)?
@@ -118,11 +117,10 @@ final class PetSettingsViewController: NSViewController {
     private var loginRegistered = false
 
     private let shareSwitch = NSButton(checkboxWithTitle: "同步按键和鼠标动作", target: nil, action: nil)
-    private let networkSwitch = NSButton(checkboxWithTitle: "开启局域网联机", target: nil, action: nil)
     private let tabs = NSSegmentedControl(labels: ["桌宠", "联机", "QQ 群"], trackingMode: .selectOne, target: nil, action: nil)
     private let petScroll = NSScrollView()
     private let petPage = FlippedView()
-    private let lanPage = NSView()
+    private let roomPage = NSView()
     private let groupPage = NSView()
     private let createRoom = NSButton(title: "创建房间", target: nil, action: nil)
     private let joinCode = NSTextField()
@@ -130,7 +128,14 @@ final class PetSettingsViewController: NSViewController {
     private let roomCodeLabel = NSTextField(labelWithString: "")
     private let copyRoom = NSButton(title: "复制", target: nil, action: nil)
     private let exitRoom = NSButton(title: "退出房间", target: nil, action: nil)
-    private let roomHint = NSTextField(labelWithString: "房间通过加密中转联机，分享房间码邀请伙伴")
+    private let roomHint = NSTextField(labelWithString: "")
+    private let roomVisibility = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let discoverRooms = NSButton(title: "发现公开房间", target: nil, action: nil)
+    private let closeDiscovery = NSButton(title: "返回", target: nil, action: nil)
+    private let publicRooms = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let joinPublic = NSButton(title: "加入", target: nil, action: nil)
+    private var directory: RoomDirectory?
+    private var publicEntries: [RoomDirectory.Entry] = []
     private let networkState = NSTextField(labelWithString: "")
     private let networkMessage = NSTextField(labelWithString: "")
     private let emptyMessage = NSTextField(wrappingLabelWithString: "")
@@ -171,11 +176,12 @@ final class PetSettingsViewController: NSViewController {
         let title = NSTextField(labelWithString: "豚鼠键盘")
         title.font = .systemFont(ofSize: 17, weight: .bold)
         title.textColor = darkBrown
-        add(title, x: 70, top: 12, width: 170, height: 24, to: root)
+        add(title, x: 70, top: 12, width: 90, height: 24, to: root)
 
         let version = NSTextField(labelWithString: "v" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知"))
         version.font = .systemFont(ofSize: 11)
         version.textColor = mutedBrown
+        add(version, x: 70, top: 37, width: 180, height: 18, to: root)
         updateButton.target = self
         updateButton.action = #selector(downloadUpdate)
         updateButton.isBordered = false
@@ -183,17 +189,7 @@ final class PetSettingsViewController: NSViewController {
         updateButton.contentTintColor = darkBrown
         updateButton.toolTip = "在浏览器下载 macOS 版本，需手动安装"
         updateButton.isHidden = true
-        let versionRow = NSStackView(views: [version, updateButton])
-        versionRow.orientation = .horizontal
-        versionRow.alignment = .centerY
-        versionRow.spacing = 4
-        versionRow.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(versionRow)
-        NSLayoutConstraint.activate([
-            versionRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 70),
-            versionRow.topAnchor.constraint(equalTo: root.topAnchor, constant: 37),
-            versionRow.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -18)
-        ])
+        add(updateButton, x: 166, top: 12, width: 106, height: 24, to: root)
 
         let closeButton = NSButton(title: "×", target: self, action: #selector(closePanel))
         closeButton.isBordered = false
@@ -211,8 +207,8 @@ final class PetSettingsViewController: NSViewController {
         petPage.frame = NSRect(x: 0, y: 0, width: 316, height: 370)
         petScroll.documentView = petPage
         add(petScroll, x: 0, top: 100, width: 316, height: 352, to: root)
-        add(lanPage, x: 0, top: 100, width: 316, height: 352, to: root)
-        lanPage.isHidden = true
+        add(roomPage, x: 0, top: 100, width: 316, height: 352, to: root)
+        roomPage.isHidden = true
         add(groupPage, x: 18, top: 100, width: 280, height: 352, to: root)
         groupPage.isHidden = true
 
@@ -286,57 +282,72 @@ final class PetSettingsViewController: NSViewController {
 
         createRoom.target = self
         createRoom.action = #selector(createRoomAction)
-        add(createRoom, x: 18, top: 10, width: 88, height: 26, to: lanPage)
+        add(createRoom, x: 18, top: 10, width: 88, height: 26, to: roomPage)
         joinCode.placeholderString = "输入房间码"
-        add(joinCode, x: 112, top: 12, width: 118, height: 24, to: lanPage)
+        add(joinCode, x: 112, top: 12, width: 118, height: 24, to: roomPage)
         joinRoom.target = self
         joinRoom.action = #selector(joinRoomAction)
-        add(joinRoom, x: 233, top: 10, width: 65, height: 26, to: lanPage)
+        add(joinRoom, x: 233, top: 10, width: 65, height: 26, to: roomPage)
         roomCodeLabel.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
-        add(roomCodeLabel, x: 18, top: 12, width: 163, height: 23, to: lanPage)
+        add(roomCodeLabel, x: 18, top: 12, width: 163, height: 23, to: roomPage)
         copyRoom.target = self
         copyRoom.action = #selector(copyRoomAction)
-        add(copyRoom, x: 180, top: 10, width: 50, height: 26, to: lanPage)
+        add(copyRoom, x: 180, top: 10, width: 50, height: 26, to: roomPage)
         exitRoom.target = self
         exitRoom.action = #selector(exitRoomAction)
-        add(exitRoom, x: 232, top: 10, width: 66, height: 26, to: lanPage)
+        add(exitRoom, x: 232, top: 10, width: 66, height: 26, to: roomPage)
         roomHint.font = .systemFont(ofSize: 10)
         roomHint.textColor = mutedBrown
-        add(roomHint, x: 18, top: 43, width: 280, height: 18, to: lanPage)
+        add(roomHint, x: 18, top: 43, width: 280, height: 18, to: roomPage)
+        roomVisibility.addItems(withTitles: ["私密", "公开"])
+        roomVisibility.selectItem(at: 0)
+        roomVisibility.setAccessibilityLabel("房间可见性")
+        roomVisibility.toolTip = "私密房间通过房间码邀请，公开房间可被发现。每间最多 16 人。"
+        add(roomVisibility, x: 18, top: 39, width: 88, height: 26, to: roomPage)
+        discoverRooms.target = self
+        discoverRooms.action = #selector(toggleRoomDiscovery)
+        add(discoverRooms, x: 112, top: 39, width: 118, height: 26, to: roomPage)
+        closeDiscovery.target = self
+        closeDiscovery.action = #selector(toggleRoomDiscovery)
+        add(closeDiscovery, x: 18, top: 39, width: 65, height: 26, to: roomPage)
+        publicRooms.target = self
+        publicRooms.action = #selector(updatePublicJoin)
+        publicRooms.setAccessibilityLabel("公开房间列表")
+        add(publicRooms, x: 88, top: 39, width: 142, height: 26, to: roomPage)
+        joinPublic.target = self
+        joinPublic.action = #selector(joinPublicRoomAction)
+        add(joinPublic, x: 233, top: 39, width: 65, height: 26, to: roomPage)
+        updateDiscoveryControls(enabled: true)
 
-        networkSwitch.target = self
-        networkSwitch.action = #selector(toggleNetworking(_:))
-        networkSwitch.font = .systemFont(ofSize: 12)
-        add(networkSwitch, trailing: 18, top: 65, width: 127, height: 22, to: lanPage)
         networkState.font = .systemFont(ofSize: 11, weight: .semibold)
         networkState.alignment = .left
-        add(networkState, x: 18, top: 65, width: 150, height: 22, to: lanPage)
+        add(networkState, x: 18, top: 65, width: 280, height: 22, to: roomPage)
         shareSwitch.target = self
         shareSwitch.action = #selector(toggleShareActivity(_:))
         shareSwitch.font = .systemFont(ofSize: 12)
-        add(shareSwitch, x: 18, top: 88, width: 280, height: 22, to: lanPage)
+        add(shareSwitch, x: 18, top: 88, width: 280, height: 22, to: roomPage)
         networkMessage.font = .systemFont(ofSize: 11)
         networkMessage.textColor = NSColor(calibratedRed: 0.65, green: 0.30, blue: 0.22, alpha: 1)
         networkMessage.lineBreakMode = .byTruncatingTail
-        add(networkMessage, x: 18, top: 111, width: 280, height: 18, to: lanPage)
+        add(networkMessage, x: 18, top: 111, width: 280, height: 18, to: roomPage)
         let mine = sectionLabel("本机")
-        add(mine, x: 18, top: 133, width: 200, height: 18, to: lanPage)
-        add(localRow, x: 18, top: 153, width: 280, height: 56, to: lanPage)
+        add(mine, x: 18, top: 133, width: 200, height: 18, to: roomPage)
+        add(localRow, x: 18, top: 153, width: 280, height: 56, to: roomPage)
         localRow.layer?.backgroundColor = sage.cgColor
         localRow.canRename = true
         localRow.onSaveNickname = { [weak self] value in self?.onSaveNickname?(value) ?? false }
         let online = sectionLabel("联机伙伴")
-        add(online, x: 18, top: 220, width: 200, height: 18, to: lanPage)
+        add(online, x: 18, top: 220, width: 200, height: 18, to: roomPage)
         peerScroll.hasVerticalScroller = true
         peerScroll.drawsBackground = false
         peerScroll.borderType = .noBorder
         peerScroll.documentView = peerDocument
-        add(peerScroll, x: 18, top: 241, width: 280, height: 100, to: lanPage)
+        add(peerScroll, x: 18, top: 241, width: 280, height: 100, to: roomPage)
         emptyMessage.font = .systemFont(ofSize: 12)
         emptyMessage.textColor = mutedBrown
-        add(emptyMessage, x: 26, top: 246, width: 260, height: 48, to: lanPage)
+        add(emptyMessage, x: 26, top: 246, width: 260, height: 48, to: roomPage)
         let compactViews: [NSView] = [mine, localRow, online, peerScroll, emptyMessage]
-        compactConstraints = lanPage.constraints.compactMap { constraint in
+        compactConstraints = roomPage.constraints.compactMap { constraint in
             guard constraint.firstAttribute == .top, let child = constraint.firstItem as? NSView,
                   compactViews.contains(where: { $0 === child }) else { return nil }
             return (constraint, constraint.constant)
@@ -346,11 +357,11 @@ final class PetSettingsViewController: NSViewController {
         divider.boxType = .separator
         add(divider, x: 18, top: 452, width: 280, height: 1, to: root)
 
-        let corner = footerButton("回到右下角", action: #selector(returnToCorner))
-        add(corner, x: 18, top: 465, width: 172, height: 32, to: root)
+        let feedback = footerButton("反馈问题", action: #selector(openFeedback))
+        add(feedback, x: 18, top: 465, width: 136, height: 32, to: root)
         let quit = footerButton("退出", action: #selector(quitApp))
         quit.contentTintColor = NSColor(calibratedRed: 155 / 255, green: 79 / 255, blue: 63 / 255, alpha: 1)
-        add(quit, trailing: 18, top: 465, width: 96, height: 32, to: root)
+        add(quit, trailing: 18, top: 465, width: 136, height: 32, to: root)
     }
 
     func setUpdateAvailable(_ available: Bool) {
@@ -360,30 +371,30 @@ final class PetSettingsViewController: NSViewController {
     @objc private func downloadUpdate() { onDownloadUpdate?() }
 
     func refresh(skinID: String, scale: Double, showLabels: Bool, clickThrough: Bool,
-                 networking: Bool, keys: UInt64, clicks: UInt64,
+                 keys: UInt64, clicks: UInt64,
                  peers: [(String, LocalPeers.Peer)], networkStatus: String,
-                 roomCode: String?, roomConnected: Bool, nickname: String, shareActivity: Bool = true) {
+                 roomCode: String?, roomConnected: Bool, nickname: String, shareActivity: Bool = true,
+                 shareActivityAvailable: Bool = true, roomPublic: Bool = false) {
         shareSwitch.state = shareActivity ? .on : .off
+        shareSwitch.isEnabled = shareActivityAvailable
         let inRoom = roomCode != nil
-        let inLAN = networking && !inRoom
-        networkSwitch.state = inLAN ? .on : .off
-        networkSwitch.isHidden = inRoom
+        if inRoom { directory = nil }
+        updateDiscoveryControls(enabled: !inRoom)
         createRoom.isHidden = inRoom
         joinCode.isHidden = inRoom
         joinRoom.isHidden = inRoom
-        createRoom.isEnabled = !inLAN
-        joinCode.isEnabled = !inLAN
-        joinRoom.isEnabled = !inLAN
-        roomCodeLabel.isHidden = !inRoom
-        copyRoom.isHidden = !inRoom
+        roomCodeLabel.isHidden = !roomConnected
+        copyRoom.isHidden = !roomConnected
         exitRoom.isHidden = !inRoom
+        roomHint.isHidden = !roomConnected
+        roomHint.stringValue = roomPublic ? "其他人可以从公开房间列表加入。" : "私密房间通过房间码邀请，每间最多 16 人。"
         if let code = roomCode {
             let chars = Array(code)
             if chars.count == 20 {
                 roomCodeLabel.stringValue = stride(from: 0, to: 20, by: 5).map { String(chars[$0..<($0 + 5)]) }.joined(separator: " ")
             }
         }
-        let error = inRoom ? "" : (networking ? networkStatus : networkError)
+        let error = inRoom ? "" : networkError
         networkMessage.stringValue = error
         networkMessage.toolTip = error
         networkMessage.isHidden = error.isEmpty
@@ -392,27 +403,25 @@ final class PetSettingsViewController: NSViewController {
             if constraint.constant != top { constraint.constant = top }
         }
         if inRoom {
-            networkState.stringValue = roomConnected ? "房间已连接 · 伙伴 \(peers.count)" : "房间：\(networkStatus.isEmpty ? "连接中" : networkStatus)"
+            networkState.stringValue = networkStatus.isEmpty ? "连接中" : networkStatus
             networkState.textColor = roomConnected ? NSColor(calibratedRed: 0.34, green: 0.48, blue: 0.29, alpha: 1) : mutedBrown
+        } else if let directory = directory {
+            networkState.stringValue = !directory.connected ? directory.status :
+                publicEntries.isEmpty ? "正在寻找公开房间…" : "\(publicEntries.count) 个公开房间"
+            networkState.textColor = mutedBrown
         } else if !error.isEmpty {
             networkState.stringValue = "联机异常"
             networkState.textColor = NSColor(calibratedRed: 0.65, green: 0.30, blue: 0.22, alpha: 1)
-        } else if !networking {
+        } else {
             networkState.stringValue = "未连接"
             networkState.textColor = mutedBrown
-        } else if peers.isEmpty {
-            networkState.stringValue = "局域网寻找中"
-            networkState.textColor = mutedBrown
-        } else {
-            networkState.stringValue = "局域网在线 \(peers.count)"
-            networkState.textColor = NSColor(calibratedRed: 0.34, green: 0.48, blue: 0.29, alpha: 1)
         }
         let skinName = PetSkin.named(skinID).name
         let localName = nickname.isEmpty ? skinName + " · 我" : nickname + " · " + skinName + " · 我"
         localRow.savedNickname = nickname
         localRow.update(name: localName, image: portrait(skinID), keys: keys, clicks: clicks)
-        emptyMessage.isHidden = !peers.isEmpty || !error.isEmpty
-        emptyMessage.stringValue = inRoom ? "将房间码发给朋友，对方加入后就会出现在这里。" : (networking ? "让朋友连上同一局域网，再打开局域网开关。" : "加入房间后，朋友就能看到你的小猪和累计次数。")
+        emptyMessage.isHidden = !peers.isEmpty || !error.isEmpty || inRoom
+        emptyMessage.stringValue = "创建房间时选择可见性。房间最多 16 人。"
         updatePeers(peers)
         scaleValue.stringValue = "\(Int((scale * 100).rounded()))%"
         labelsSwitch.state = showLabels ? .on : .off
@@ -465,8 +474,65 @@ final class PetSettingsViewController: NSViewController {
 
     @objc private func changeTab() {
         petScroll.isHidden = tabs.selectedSegment != 0
-        lanPage.isHidden = tabs.selectedSegment != 1
+        roomPage.isHidden = tabs.selectedSegment != 1
         groupPage.isHidden = tabs.selectedSegment != 2
+        if roomPage.isHidden { directory = nil }
+    }
+
+    override func viewDidDisappear() {
+        super.viewDidDisappear()
+        directory = nil
+    }
+
+    private func updateDiscoveryControls(enabled: Bool) {
+        let browsing = enabled && directory != nil
+        createRoom.isEnabled = enabled && !browsing
+        roomVisibility.isHidden = !enabled || browsing
+        discoverRooms.isHidden = !enabled || browsing
+        closeDiscovery.isHidden = !browsing
+        publicRooms.isHidden = !browsing
+        joinPublic.isHidden = !browsing
+        guard browsing, let directory = directory else {
+            publicEntries.removeAll()
+            publicRooms.removeAllItems()
+            return
+        }
+        let entries = directory.refresh(now: ProcessInfo.processInfo.systemUptime)
+        if entries.map({ $0.code + $0.host + $0.label }) != publicEntries.map({ $0.code + $0.host + $0.label }) {
+            let selected = publicEntry?.code
+            publicEntries = entries
+            var labels: Set<String> = []
+            publicRooms.removeAllItems()
+            publicRooms.addItems(withTitles: entries.map {
+                labels.insert($0.label).inserted ? $0.label : $0.label + " · " + $0.code
+            })
+            if let selected = selected, let index = entries.firstIndex(where: { $0.code == selected }) {
+                publicRooms.selectItem(at: index)
+            }
+        }
+        updatePublicJoin()
+    }
+
+    private var publicEntry: RoomDirectory.Entry? {
+        let index = publicRooms.indexOfSelectedItem
+        return publicEntries.indices.contains(index) ? publicEntries[index] : nil
+    }
+
+    @objc private func updatePublicJoin() {
+        joinPublic.isEnabled = (publicEntry?.count ?? RoomMembership.capacity) < RoomMembership.capacity
+    }
+
+    @objc private func toggleRoomDiscovery() {
+        directory = directory == nil ? RoomDirectory() : nil
+        updateDiscoveryControls(enabled: true)
+        networkState.stringValue = directory == nil ? "未连接" : "连接中"
+    }
+
+    @objc private func joinPublicRoomAction() {
+        guard let entry = publicEntry, entry.count < RoomMembership.capacity else { return }
+        directory = nil
+        networkError = ""
+        onJoinPublicRoom?(entry)
     }
 
     @objc private func selectSkin(_ sender: NSButton) {
@@ -485,18 +551,16 @@ final class PetSettingsViewController: NSViewController {
     @objc private func toggleClickThrough(_ sender: NSButton) { onClickThroughChange?(sender.state == .on) }
     func setNetworkError(_ message: String) { networkError = message }
     @objc private func toggleShareActivity(_ sender: NSButton) { onShareActivityChange?(sender.state == .on) }
-    @objc private func createRoomAction() { networkError = ""; onCreateRoom?() }
+    @objc private func createRoomAction() { networkError = ""; onCreateRoom?(roomVisibility.indexOfSelectedItem == 1) }
     @objc private func joinRoomAction() { networkError = ""; onJoinRoom?(joinCode.stringValue) }
     @objc private func exitRoomAction() { onExitRoom?() }
     @objc private func copyRoomAction() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(roomCodeLabel.stringValue, forType: .string)
     }
-    @objc private func toggleNetworking(_ sender: NSButton) {
-        networkError = ""
-        onNetworkingChange?(sender.state == .on)
+    @objc private func openFeedback() {
+        if let url = URL(string: "https://github.com/gwtt/guinea-pig-keyboard/issues/new/choose") { NSWorkspace.shared.open(url) }
     }
-    @objc private func returnToCorner() { onReturnToCorner?() }
     @objc private func quitApp() { onQuit?() }
     @objc private func closePanel() { onClose?() }
 

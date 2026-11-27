@@ -1,0 +1,11 @@
+name: 提出功能需求
+description: 建议一个新功能或现有功能的改进
+labels: [enhancement]
+body:
+  - type: textarea
+    id: request
+    attributes:
+      label: 你希望增加或改进什么？
+      description: 可以写下你会在什么场景用到它，以及你希望它怎样工作。
+    validations:
+      required: true

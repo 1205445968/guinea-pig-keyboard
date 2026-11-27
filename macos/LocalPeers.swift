@@ -1,5 +1,4 @@
 import Foundation
-import Darwin
 
 final class LocalPeers {
     enum Action: Equatable {
@@ -48,25 +47,32 @@ final class LocalPeers {
     private static let actionBatchLimit = 12
     private static let actionQueueLimit = 64
     private(set) var peers: [String: Peer] = [:]
-    private(set) var active = false
     private(set) var status = ""
     private(set) var roomCode: String?
-    var roomConnected: Bool { room?.connected ?? false }
+    var roomConnected: Bool { room?.connected == true && membership?.joined == true }
+    var roomPublic: Bool { membership?.isPublic ?? false }
+    var shareActivityAvailable: Bool { membership?.visibilityKnown ?? true }
     private var room: RoomTransport?
-    private var socketFD: Int32 = -1
+    private var membership: RoomMembership?
+    private var directory: RoomDirectory?
     private var timer: Timer?
-    private let session = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+    private var session = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     var payload: (() -> (String, UInt64, UInt64))?
     var nickname: (() -> String)?
     var onUpdate: (() -> Void)?
-    var shareActivity = true {
-        didSet {
-            guard shareActivity != oldValue else { return }
+    private var sharePrivateActivity = true
+    private var sharePublicActivity = false
+    var shareActivity: Bool {
+        get { shareActivityAvailable && (roomPublic ? sharePublicActivity : sharePrivateActivity) }
+        set {
+            guard shareActivityAvailable, newValue != shareActivity else { return }
+            if roomPublic { sharePublicActivity = newValue }
+            else { sharePrivateActivity = newValue }
             pendingActions.removeAll(keepingCapacity: true)
             refreshState()
         }
     }
-    private var lastBroadcast: TimeInterval = 0
+    private var lastStateSend: TimeInterval = 0
     private var actionSequence: UInt64 = 0
     private var pendingActions: [(token: String, time: TimeInterval)] = []
 
@@ -78,47 +84,28 @@ final class LocalPeers {
     func recordClick(right: Bool) { recordAction(right ? "r" : "l") }
 
     private func recordAction(_ token: String) {
-        guard active, shareActivity, room == nil || roomConnected else { return }
+        guard shareActivity, roomConnected else { return }
         if pendingActions.count == Self.actionQueueLimit { pendingActions.removeFirst() }
         pendingActions.append((token, ProcessInfo.processInfo.systemUptime))
     }
 
-    func refreshState() { lastBroadcast = 0 }
+    func refreshState() { lastStateSend = 0 }
 
     func takeAction(for id: String, visible: Bool) -> Action? {
         guard visible else { peers[id]?.clearActions(); return nil }
         return peers[id]?.takeAction(now: ProcessInfo.processInfo.systemUptime)
     }
 
-    func start() -> Bool {
-        guard !active else { return true }
-        let fd = socket(AF_INET, SOCK_DGRAM, 0)
-        guard fd >= 0 else { return false }
-        var yes: Int32 = 1
-        guard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size)) == 0,
-              setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &yes, socklen_t(MemoryLayout<Int32>.size)) == 0 else { close(fd); return false }
-        var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = in_port_t(41684).bigEndian
-        address.sin_addr = in_addr(s_addr: INADDR_ANY)
-        let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
-        guard bound == 0, fcntl(fd, F_SETFL, O_NONBLOCK) == 0 else { close(fd); return false }
-        socketFD = fd
-        active = true
-        lastBroadcast = 0
-        startTimer()
-        return true
-    }
 
-    func startRoom(_ code: String) -> Bool {
+    func startRoom(_ code: String, hosting: Bool = false, isPublic: Bool = false, expectedHost: String? = nil) -> Bool {
         guard let normalized = RoomTransport.normalizeCode(code) else { return false }
         stop()
+        session = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         roomCode = normalized
+        membership = RoomMembership(ownID: session, hosting: hosting, isPublic: isPublic, expectedHost: expectedHost)
+        if hosting && isPublic { directory = RoomDirectory() }
         let transport = RoomTransport(code: normalized)
         room = transport
-        active = true
-        lastBroadcast = 0
         transport.start()
         startTimer()
         return true
@@ -136,53 +123,56 @@ final class LocalPeers {
         timer = nil
         room?.stop()
         room = nil
+        membership = nil
+        directory = nil
+        sharePublicActivity = false
         roomCode = nil
-        if socketFD >= 0 { close(socketFD) }
-        socketFD = -1
-        active = false
         status = ""
         clearPeers()
     }
 
     private func clearPeers() {
         pendingActions.removeAll(keepingCapacity: true)
-        lastBroadcast = 0
+        refreshState()
         guard !peers.isEmpty else { return }
         peers.removeAll()
         onUpdate?()
     }
 
     private func tick() {
-        let now = ProcessInfo.processInfo.systemUptime
-        if let room = room {
+        guard let room = room, let membership = membership, let code = roomCode else { return }
+        guard room.connected else {
             status = room.status
-            guard room.connected else { clearPeers(); return }
+            membership.disconnected()
+            clearPeers()
+            return
         }
-
-        var outgoing: [String] = []
-        if lastBroadcast == 0 || now - lastBroadcast >= (room == nil ? 2 : 5) {
-            lastBroadcast = now
-            outgoing = statePackets()
-        }
-        if let packet = actionPacket(now: now) { outgoing.append(packet) }
-
+        let now = ProcessInfo.processInfo.systemUptime
         var changed = false
-        if let room = room {
-            for message in outgoing { room.publish(message) }
-            for message in room.drain() {
-                if accept(Array(message.utf8), now: now) { changed = true }
-            }
-        } else {
-            if !outgoing.isEmpty { broadcast(outgoing) }
-            var bytes = [UInt8](repeating: 0, count: 129)
-            for _ in 0..<32 {
-                let count = recv(socketFD, &bytes, bytes.count, 0)
-                if count <= 0 { break }
-                if count <= 128, accept(Array(bytes.prefix(count)), now: now) { changed = true }
-            }
+        membership.expire(now: now)
+        for message in room.drain() {
+            let fields = message.split(separator: "|", omittingEmptySubsequences: false)
+            if fields.first == "WJ2" || fields.first == "WM2" {
+                membership.receive(fields, now: now)
+            } else if fields.count >= 2, membership.contains(String(fields[1])),
+                      accept(Array(message.utf8), now: now) { changed = true }
         }
+        if let control = membership.nextPacket(now: now) { room.publish(control) }
+        directory?.advertise(now: now, code: code, host: session, count: membership.count, nickname: nickname?() ?? "")
+        guard membership.joined else {
+            status = membership.count == RoomMembership.capacity ? "房间已满，等待空位" : "等待房主确认"
+            clearPeers()
+            return
+        }
+        status = (membership.isPublic ? "公开房间" : "私密房间") + " · \(membership.count)/\(RoomMembership.capacity)"
 
-        let remaining = Self.unexpired(peers, now: now, expiry: room == nil ? 8 : 20)
+        if lastStateSend == 0 || now - lastStateSend >= 5 {
+            lastStateSend = now
+            for message in statePackets() { room.publish(message) }
+        }
+        if let packet = actionPacket(now: now) { room.publish(packet) }
+
+        let remaining = Self.unexpired(peers, now: now).filter { membership.contains($0.key) }
         if remaining.count != peers.count {
             peers = remaining
             changed = true
@@ -209,6 +199,13 @@ final class LocalPeers {
         return value
     }
 
+    static func decodedNickname(_ input: Substring) -> String? {
+        guard input.utf8.count <= 88, let data = Data(base64Encoded: String(input)),
+              data.base64EncodedString() == input, let text = String(data: data, encoding: .utf8),
+              normalizedNickname(text) == text else { return nil }
+        return text
+    }
+
     @discardableResult
     static func apply(bytes: [UInt8], ownID: String, now: TimeInterval, peers: inout [String: Peer]) -> Bool {
         guard bytes.count <= 128, let message = String(bytes: bytes, encoding: .ascii) else { return false }
@@ -228,9 +225,7 @@ final class LocalPeers {
         guard var peer = peers[id] else { return false }
         switch fields[0] {
         case "WN1":
-            guard fields.count == 3, let data = Data(base64Encoded: String(fields[2])),
-                  data.base64EncodedString() == fields[2], let text = String(data: data, encoding: .utf8),
-                  let value = normalizedNickname(text), value == text else { return false }
+            guard fields.count == 3, let value = decodedNickname(fields[2]) else { return false }
             peer.nickname = value
         case "WS1":
             guard fields.count == 4, fields[3] == "0" || fields[3] == "1" else { return false }
@@ -296,10 +291,10 @@ final class LocalPeers {
     }
 
     private static func validID(_ value: Substring) -> Bool {
-        value.utf8.count == 32 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+        RoomMembership.validID(value)
     }
 
-    private static func count(_ value: Substring) -> UInt64? {
+    static func count(_ value: Substring) -> UInt64? {
         guard !value.isEmpty, value.utf8.allSatisfy({ (48...57).contains($0) }),
               let number = UInt64(value), number <= UInt64(Int64.max) else { return nil }
         return number
@@ -320,45 +315,7 @@ final class LocalPeers {
         return actions
     }
 
-    static func unexpired(_ peers: [String: Peer], now: TimeInterval, expiry: TimeInterval = 8) -> [String: Peer] {
-        peers.filter { now - $0.value.seen < expiry }
-    }
-
-    private func broadcast(_ packets: [String]) {
-        let messages = packets.map { Data($0.utf8) }
-        var interfaces: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&interfaces) == 0 else { status = "无法读取网络接口"; return }
-        defer { freeifaddrs(interfaces) }
-        var current = interfaces
-        var targets = 0
-        var successes = 0
-        while let item = current {
-            defer { current = item.pointee.ifa_next }
-            let flags = Int32(item.pointee.ifa_flags)
-            guard flags & IFF_UP != 0, flags & IFF_BROADCAST != 0, flags & IFF_LOOPBACK == 0,
-                  let address = item.pointee.ifa_addr, let mask = item.pointee.ifa_netmask,
-                  address.pointee.sa_family == sa_family_t(AF_INET) else { continue }
-            targets += 1
-            let ip = UnsafeRawPointer(address).assumingMemoryBound(to: sockaddr_in.self).pointee.sin_addr.s_addr
-            let netmask = UnsafeRawPointer(mask).assumingMemoryBound(to: sockaddr_in.self).pointee.sin_addr.s_addr
-            var destination = sockaddr_in()
-            destination.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-            destination.sin_family = sa_family_t(AF_INET)
-            destination.sin_port = in_port_t(41684).bigEndian
-            destination.sin_addr = in_addr(s_addr: ip | ~netmask)
-            let allSent = messages.allSatisfy { message in
-                message.withUnsafeBytes { buffer in
-                    let sent = withUnsafePointer(to: &destination) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                        sendto(socketFD, buffer.baseAddress, buffer.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-                    } }
-                    return sent == message.count
-                }
-            }
-            if allSent { successes += 1 }
-        }
-        if targets == 0 { status = "没有可广播的 IPv4 网卡" }
-        else if successes == 0 { status = "广播发送失败" }
-        else if successes < targets { status = "部分网卡广播发送失败" }
-        else { status = "" }
+    static func unexpired(_ peers: [String: Peer], now: TimeInterval) -> [String: Peer] {
+        peers.filter { now - $0.value.seen < 20 }
     }
 }

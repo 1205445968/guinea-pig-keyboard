@@ -281,15 +281,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 self?.refreshLoginAtStartup()
             }
             created.onShareActivityChange = { [weak self] value in
-                self?.peers.shareActivity = value
-                self?.defaults.set(value, forKey: "shareActivity")
-                self?.refreshSettings()
-            }
-            created.onNetworkingChange = { [weak self] value in
                 guard let self = self else { return }
-                if value {
-                    if !self.peers.start() { self.settingsController?.setNetworkError("联机启动失败，请检查端口") }
-                } else { self.peers.stop() }
+                self.peers.shareActivity = value
+                if !self.peers.roomPublic { self.defaults.set(value, forKey: "shareActivity") }
                 self.refreshSettings()
             }
             created.onSaveNickname = { [weak self] value in
@@ -300,9 +294,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 self.refreshSettings()
                 return true
             }
-            created.onCreateRoom = { [weak self] in
+            created.onCreateRoom = { [weak self] isPublic in
                 guard let self = self else { return }
-                _ = self.peers.startRoom(RoomTransport.createCode())
+                _ = self.peers.startRoom(RoomTransport.createCode(), hosting: true, isPublic: isPublic)
                 self.refreshSettings()
             }
             created.onJoinRoom = { [weak self] code in
@@ -310,8 +304,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 if !self.peers.startRoom(code) { self.settingsController?.setNetworkError("房间码无效，请检查后重试") }
                 self.refreshSettings()
             }
+            created.onJoinPublicRoom = { [weak self] entry in
+                guard let self = self else { return }
+                _ = self.peers.startRoom(entry.code, isPublic: true, expectedHost: entry.host)
+                self.refreshSettings()
+            }
             created.onExitRoom = { [weak self] in self?.peers.stop(); self?.refreshSettings() }
-            created.onReturnToCorner = { [weak self] in self?.returnToCorner() }
             created.onQuit = { [weak self] in self?.quit() }
             created.onClose = { [weak self] in self?.settingsPopover?.performClose(nil) }
             settingsController = created
@@ -354,21 +352,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private func refreshSettings() {
         let rows = peers.peers.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
         settingsController?.refresh(skinID: skinID, scale: scale, showLabels: showLabels, clickThrough: clickThrough,
-                                    networking: peers.active,
                                     keys: keyCount, clicks: clickCount, peers: rows, networkStatus: peers.status,
-                                    roomCode: peers.roomCode, roomConnected: peers.roomConnected, nickname: nickname, shareActivity: peers.shareActivity)
+                                    roomCode: peers.roomCode, roomConnected: peers.roomConnected, nickname: nickname,
+                                    shareActivity: peers.shareActivity, shareActivityAvailable: peers.shareActivityAvailable,
+                                    roomPublic: peers.roomPublic)
     }
     private func updateFriends() {
         guard let window = window else { return }
         friends.update(owner: window, members: peers.peers, clickThrough: clickThrough, showLabels: showLabels) {
             peers.takeAction(for: $0, visible: window.isVisible)
         }
-    }
-    private func returnToCorner() {
-        let screen = window.screen ?? NSScreen.main ?? NSScreen.screens[0]
-        let visible = screen.visibleFrame
-        window.setFrameOrigin(NSPoint(x: visible.maxX - window.frame.width - 20, y: visible.minY + 20))
-        savePosition()
     }
     @objc private func toggleVisible() {
         manuallyHidden.toggle()

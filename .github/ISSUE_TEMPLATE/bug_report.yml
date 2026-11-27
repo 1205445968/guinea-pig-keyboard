@@ -1,0 +1,25 @@
+name: 反馈使用问题
+description: 报告豚鼠键盘的异常或 Bug
+labels: [bug]
+body:
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 操作系统
+      options:
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 豚鼠键盘版本
+      placeholder: 可在桌宠设置中查看版本号
+  - type: textarea
+    id: problem
+    attributes:
+      label: 遇到了什么问题？
+      description: 请写下触发步骤、实际发生的情况和你的预期。也可以附上截图。
+    validations:
+      required: true

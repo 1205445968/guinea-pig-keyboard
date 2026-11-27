@@ -7,7 +7,6 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
@@ -167,6 +166,7 @@ namespace WheekKeys
             Closed += delegate
             {
                 deactivateTimer.Stop();
+                StopRoomDiscovery();
                 owner.Updater.Changed -= RefreshUpdate;
                 owner.SettingsClosed(this);
             };
@@ -174,12 +174,12 @@ namespace WheekKeys
             RefreshState();
         }
 
-        private Border BuildTabs(UIElement petPage, UIElement lanPage, UIElement groupPage)
+        private Border BuildTabs(UIElement petPage, UIElement roomPage, UIElement groupPage)
         {
             UniformGrid tabs = new UniformGrid { Rows = 1, Columns = 3 };
             RadioButton petTab = PageTab("桌宠", petPage);
             tabs.Children.Add(petTab);
-            tabs.Children.Add(PageTab("联机", lanPage));
+            tabs.Children.Add(PageTab("联机", roomPage));
             tabs.Children.Add(PageTab("QQ 群", groupPage));
             petTab.IsChecked = true;
             return new Border { Background = Paper2, Padding = new Thickness(3), CornerRadius = new CornerRadius(10),
@@ -206,6 +206,7 @@ namespace WheekKeys
                 tab.Foreground = Muted;
                 tab.FontWeight = FontWeights.Normal;
                 page.Visibility = Visibility.Collapsed;
+                if (page == networkPage) StopRoomDiscovery();
             };
             return tab;
         }
@@ -244,17 +245,18 @@ namespace WheekKeys
             row.Children.Add(avatar);
 
             StackPanel title = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            title.Children.Add(new TextBlock { Text = "豚鼠键盘", FontSize = 15, FontWeight = FontWeights.Bold, Foreground = Ink });
-            TextBlock subtitle = new TextBlock { FontSize = 10, Foreground = Muted, VerticalAlignment = VerticalAlignment.Center };
-            string version = typeof(PetSettings).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion;
-            subtitle.Inlines.Add(new Run("桌宠设置"));
-            subtitle.Inlines.Add(new Run("  v" + version) { FontSize = 9, Foreground = Brushes.Gray });
             installUpdate = ActionButton("更新到最新版本", SageSoft, async delegate { await owner.InstallUpdateAsync(); });
             AutomationProperties.SetAutomationId(installUpdate, "install-update");
             installUpdate.Height = 22;
             installUpdate.Padding = new Thickness(7, 0, 7, 0);
             installUpdate.Margin = new Thickness(7, 0, 0, 0);
-            title.Children.Add(new WrapPanel { Margin = new Thickness(0, 2, 0, 0), Children = { subtitle, installUpdate } });
+            DockPanel.SetDock(installUpdate, Dock.Right);
+            DockPanel headline = new DockPanel { Children = { installUpdate,
+                new TextBlock { Text = "豚鼠键盘", FontSize = 15, FontWeight = FontWeights.Bold, Foreground = Ink,
+                    VerticalAlignment = VerticalAlignment.Center } } };
+            title.Children.Add(headline);
+            string version = typeof(PetSettings).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion;
+            title.Children.Add(new TextBlock { Text = "v" + version, FontSize = 9, Foreground = Brushes.Gray, Margin = new Thickness(0, 2, 0, 0) });
             updateStatus.Margin = new Thickness(0, 3, 0, 0);
             updateStatus.TextWrapping = TextWrapping.Wrap;
             title.Children.Add(updateStatus);
@@ -438,12 +440,10 @@ namespace WheekKeys
             Border line = new Border { Height = 1, Background = Line, VerticalAlignment = VerticalAlignment.Top };
             Grid.SetColumnSpan(line, 2);
             footer.Children.Add(line);
-            Button corner = MakeButton(new TextBlock { Text = "回到右下角", FontSize = 10.5, FontWeight = FontWeights.SemiBold }, Paper2, Muted, double.NaN, 31);
-            AutomationProperties.SetAutomationId(corner, "move-to-corner");
-            AutomationProperties.SetName(corner, "回到右下角");
-            corner.Margin = new Thickness(0, 9, 4, 0);
-            corner.Click += delegate { owner.MoveToCorner(); };
-            footer.Children.Add(corner);
+            Button feedback = ActionButton("反馈问题", Paper2, owner.OpenFeedback);
+            feedback.Height = 31;
+            feedback.Margin = new Thickness(0, 9, 4, 0);
+            footer.Children.Add(feedback);
             Button exit = MakeButton(new TextBlock { Text = "退出", FontSize = 10.5, FontWeight = FontWeights.SemiBold }, Paper, Danger, double.NaN, 31);
             AutomationProperties.SetAutomationId(exit, "exit");
             AutomationProperties.SetName(exit, "退出");

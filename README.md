@@ -14,7 +14,7 @@
   <a href="https://github.com/gwtt/guinea-pig-keyboard">GitHub</a> ·
   <a href="https://github.com/gwtt/guinea-pig-keyboard/releases/latest/download/WheekKeys.exe">下载 Windows 版</a> ·
   <a href="https://github.com/gwtt/guinea-pig-keyboard/releases/latest/download/WheekKeys-macOS.zip">下载 macOS 版</a> ·
-  <a href="https://github.com/gwtt/guinea-pig-keyboard/issues/new">反馈问题</a>
+  <a href="https://github.com/gwtt/guinea-pig-keyboard/issues/new/choose">反馈问题</a>
 </p>
 
 <p align="center">
@@ -30,7 +30,7 @@ Windows 10 或 11 用户下载后双击 `WheekKeys.exe` 即可。Mac 用户（ma
 
 首次打开时，荷兰猪使用像素三花，大小为 58%。按住荷兰猪可拖动，右键可调整大小、切换 14 款像素外观。开启鼠标穿透后，从 Windows 托盘或 macOS 菜单栏打开设置。
 
-启动桌宠或打开设置时会自动检查更新。发现新版后，点击版本号旁的「更新到最新版本」即可在 Windows 上安装更新，或在 Mac 上下载新版安装包。
+启动桌宠或打开设置时会自动检查更新。发现新版后，点击设置顶部的「更新到最新版本」即可在 Windows 上安装更新，或在 Mac 上下载新版安装包。
 
 支持联机功能。
 

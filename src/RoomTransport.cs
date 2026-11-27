@@ -29,15 +29,17 @@ namespace WheekKeys
         private bool disposed;
         private string status = "连接中";
 
+        public RoomTransport() : this(null, ConfiguredBroker()) { }
         public RoomTransport(string normalizedCode) : this(normalizedCode, ConfiguredBroker()) { }
 
         public RoomTransport(string normalizedCode, Uri brokerUri)
         {
-            if (normalizedCode == null || NormalizeCode(normalizedCode) != normalizedCode)
+            if (normalizedCode != null && NormalizeCode(normalizedCode) != normalizedCode)
                 throw new ArgumentException("Invalid room code.", "normalizedCode");
             broker = brokerUri;
-            key = Hash("WheekKeys/fernet/" + normalizedCode);
-            topic = "wheekkeys/v1/r/" + ToHex(Hash("WheekKeys/topic/" + normalizedCode));
+            key = Hash("WheekKeys/v2/fernet/" + (normalizedCode ?? "directory"));
+            topic = normalizedCode == null ? "wheekkeys/v2/directory" :
+                "wheekkeys/v2/r/" + ToHex(Hash("WheekKeys/v2/topic/" + normalizedCode));
             if (!ValidBroker(broker))
                 status = "中转地址配置错误";
             else
@@ -337,7 +339,8 @@ namespace WheekKeys
 
         private static bool ValidPlaintext(string value)
         {
-            if (String.IsNullOrEmpty(value) || value.Length > 128) return false;
+            if (String.IsNullOrEmpty(value) ||
+                value.Length > (value.StartsWith("WM2|", StringComparison.Ordinal) ? 560 : value.StartsWith("WD2|", StringComparison.Ordinal) ? 150 : 128)) return false;
             foreach (char c in value) if (c > 127) return false;
             return true;
         }

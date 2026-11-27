@@ -57,12 +57,16 @@ final class RoomTransport {
                                  alphabet[Int((n >> 5) & 31)], alphabet[Int(n & 31)]], as: UTF8.self)
     }
 
-    init(code: String) {
-        guard let normalized = Self.normalizeCode(code) else { preconditionFailure("Invalid room code") }
+    init(code: String? = nil) {
+        precondition(code.map { Self.normalizeCode($0) == $0 } ?? true, "Invalid room code")
         self.broker = Self.brokerURL()
-        let topicHash = SHA256.hash(data: Data(("WheekKeys/topic/" + normalized).utf8))
-        self.topic = "wheekkeys/v1/r/" + topicHash.map { String(format: "%02x", $0) }.joined()
-        self.key = Array(SHA256.hash(data: Data(("WheekKeys/fernet/" + normalized).utf8)))
+        if let code = code {
+            let topicHash = SHA256.hash(data: Data(("WheekKeys/v2/topic/" + code).utf8))
+            self.topic = "wheekkeys/v2/r/" + topicHash.map { String(format: "%02x", $0) }.joined()
+        } else {
+            self.topic = "wheekkeys/v2/directory"
+        }
+        self.key = Array(SHA256.hash(data: Data(("WheekKeys/v2/fernet/" + (code ?? "directory")).utf8)))
         if broker == nil { state = "中转地址配置无效" }
     }
 
@@ -269,8 +273,12 @@ final class RoomTransport {
 
     static func validPlaintext(_ value: String) -> Bool {
         let bytes = Array(value.utf8)
-        guard bytes.count <= 128, bytes.allSatisfy({ $0 >= 32 && $0 <= 126 }) else { return false }
+        guard bytes.allSatisfy({ $0 >= 32 && $0 <= 126 }) else { return false }
         let parts = value.split(separator: "|", omittingEmptySubsequences: false)
+        if parts.first == "WM2" { return bytes.count <= 560 }
+        if parts.first == "WD2" { return bytes.count <= 150 }
+        guard bytes.count <= 128 else { return false }
+        if parts.first == "WJ2" { return bytes.count == 36 }
         if parts.count == 5 && parts[0] == "WK1" {
             return parts.dropFirst().allSatisfy { !$0.isEmpty }
         }

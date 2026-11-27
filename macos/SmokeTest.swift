@@ -68,14 +68,36 @@ import AppKit
     precondition(namedPeers[remoteID]?.nickname == "" && namedPeers[remoteID]?.seen == 14)
     precondition(parse(String(decoding: namePacket(remoteID, "小猪"), as: UTF8.self)) == nil)
     let peerMap = [parsed.0: parsed.1]
-    precondition(LocalPeers.unexpired(peerMap, now: 17.99).count == 1)
-    precondition(LocalPeers.unexpired(peerMap, now: 18).isEmpty)
-    print("Verified LAN packet validation and expiry")
+    print("Verified room state packet validation")
     let invite = "ABCDEFGHIJKLMNOP47UL"
     precondition(RoomTransport.normalizeCode("abcde-fghij-klmno-p47ul") == invite)
     precondition(RoomTransport.normalizeCode("abcde-fghij-klmno-p47um") == nil)
-    precondition(LocalPeers.unexpired(peerMap, now: 29.99, expiry: 20).count == 1)
-    precondition(LocalPeers.unexpired(peerMap, now: 30, expiry: 20).isEmpty)
+    let hostID = String(repeating: "a", count: 32)
+    let waitingID = String(format: "%032x", 17)
+    let host = RoomMembership(ownID: hostID, hosting: true, isPublic: true, expectedHost: nil)
+    let waiting = RoomMembership(ownID: waitingID, hosting: false, isPublic: true, expectedHost: hostID)
+    for id in 2...17 {
+        host.receive(["WJ2", Substring(String(format: "%032x", id))], now: 1)
+    }
+    let full = host.nextPacket(now: 1)!
+    precondition(RoomTransport.validPlaintext(full))
+    waiting.receive(full.split(separator: "|"), now: 1)
+    precondition(host.count == 16 && waiting.count == 16 && !waiting.joined)
+    for id in 3...16 {
+        host.receive(["WJ2", Substring(String(format: "%032x", id))], now: 7)
+    }
+    host.expire(now: 11)
+    host.receive(["WJ2", Substring(waitingID)], now: 11)
+    waiting.receive(host.nextPacket(now: 11)!.split(separator: "|"), now: 11)
+    waiting.receive(full.split(separator: "|"), now: 11.1)
+    precondition(waiting.joined && waiting.count == 16)
+    waiting.expire(now: 21)
+    precondition(!waiting.joined)
+    let advertisement = "WD2|\(invite)|\(hostID)|16|6Iqx55Sf"
+    precondition(RoomDirectory.parse(advertisement, now: 11)?.name == "花生")
+    precondition(RoomDirectory.parse(advertisement.replacingOccurrences(of: "|16|", with: "|17|"), now: 11) == nil)
+    precondition(LocalPeers.unexpired(peerMap, now: 29.99).count == 1)
+    precondition(LocalPeers.unexpired(peerMap, now: 30).isEmpty)
     func apply(_ message: String, now: TimeInterval) -> Bool {
         LocalPeers.apply(bytes: Array(message.utf8), ownID: ownID, now: now, peers: &namedPeers)
     }
@@ -134,10 +156,18 @@ import AppKit
         fatalError("Update button missing")
     }
     precondition(!availableUpdateButton.isHidden)
+    let version = "v" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知")
+    guard let versionLabel = descendants(settingsView).compactMap({ $0 as? NSTextField })
+        .first(where: { $0.stringValue == version }) else { fatalError("Version label missing") }
+    let versionFrame = settingsView.convert(versionLabel.bounds, from: versionLabel)
+    let updateFrame = settingsView.convert(availableUpdateButton.bounds, from: availableUpdateButton)
+    precondition(abs(versionFrame.midY - updateFrame.midY) >= 15)
     settings.setUpdateAvailable(false)
     precondition(availableUpdateButton.isHidden)
     settingsView.layoutSubtreeIfNeeded()
     let controls = descendants(settingsView).compactMap { $0 as? NSButton }
+    precondition(controls.contains { $0.title == "反馈问题" && !$0.isHiddenOrHasHiddenAncestor })
+    precondition(!controls.contains { $0.title == "回到右下角" || $0.title.contains("局域网") })
     guard let login = controls.first(where: { $0.title == "开机自启" }) else { fatalError("Login switch missing") }
     settings.setLoginAtStartup(enabled: true, pending: false, message: "请在系统设置中允许")
     precondition(login.state == .on)
@@ -160,10 +190,10 @@ import AppKit
     let plusFrame = settingsView.convert(plus.bounds, from: plus)
     precondition(minusFrame.minX < scaleFrame.minX && scaleFrame.minX < plusFrame.minX && plusFrame.maxX < settingsView.bounds.midX + 50)
     settings.refresh(skinID: "pixel-tricolor", scale: initialPetScale(0), showLabels: true, clickThrough: false,
-                     networking: false, keys: 0, clicks: 0, peers: [], networkStatus: "", roomCode: nil, roomConnected: false, nickname: "")
+                     keys: 0, clicks: 0, peers: [], networkStatus: "", roomCode: nil, roomConnected: false, nickname: "")
     precondition(scale.stringValue == "58%")
     settings.refresh(skinID: "pixel-tricolor", scale: initialPetScale(1.25), showLabels: true, clickThrough: false,
-                     networking: false, keys: 0, clicks: 0, peers: [], networkStatus: "", roomCode: nil, roomConnected: false, nickname: "")
+                     keys: 0, clicks: 0, peers: [], networkStatus: "", roomCode: nil, roomConnected: false, nickname: "")
     precondition(scale.stringValue == "125%")
     let skinButtons = descendants(settingsView).compactMap { $0 as? NSButton }.filter {
         let id = $0.identifier?.rawValue ?? ""
@@ -179,9 +209,21 @@ import AppKit
     tabs.selectedSegment = 1
     tabs.sendAction(tabs.action, to: tabs.target)
     precondition(groupCode?.isHiddenOrHasHiddenAncestor == true)
+    guard let roomVisibility = descendants(settingsView).compactMap({ $0 as? NSPopUpButton })
+        .first(where: { $0.accessibilityLabel() == "房间可见性" }),
+          let createRoom = controls.first(where: { $0.title == "创建房间" }) else {
+        fatalError("Room creation controls missing")
+    }
+    precondition(roomVisibility.titleOfSelectedItem == "私密" && roomVisibility.itemTitles == ["私密", "公开"])
+    precondition(controls.contains { $0.title == "发现公开房间" && !$0.isHiddenOrHasHiddenAncestor })
+    var createdPublicRoom = false
+    settings.onCreateRoom = { createdPublicRoom = $0 }
+    roomVisibility.selectItem(at: 1)
+    createRoom.sendAction(createRoom.action, to: createRoom.target)
+    precondition(createdPublicRoom)
     let firstPeer = LocalPeers.Peer(skin: "pixel-longhair-gold-white", keys: 12_345, clicks: 100_000_000, seen: 10)
     settings.refresh(skinID: "pixel-tricolor", scale: 1, showLabels: true, clickThrough: false,
-                     networking: true, keys: 98_765, clicks: 3,
+                     keys: 98_765, clicks: 3,
                      peers: [(remoteID, firstPeer)], networkStatus: "连接中", roomCode: invite, roomConnected: false, nickname: "")
     settingsView.layoutSubtreeIfNeeded()
     func visibleText() -> [NSTextField] {
@@ -196,11 +238,11 @@ import AppKit
     }
     nameInput.stringValue = "未保存的草稿"
     settings.refresh(skinID: "pixel-tricolor", scale: 1, showLabels: true, clickThrough: false,
-                     networking: true, keys: 98_766, clicks: 3,
+                     keys: 98_766, clicks: 3,
                      peers: [(remoteID, firstPeer)], networkStatus: "连接中", roomCode: invite, roomConnected: false, nickname: "")
     precondition(nameInput.stringValue == "未保存的草稿", "Refresh replaced nickname draft")
     let firstTexts = visibleText()
-    precondition(firstTexts.contains { $0.stringValue == "房间：连接中" })
+    precondition(firstTexts.contains { $0.stringValue == "连接中" })
     precondition(firstTexts.contains { $0.stringValue == "按键 1.2万" && $0.toolTip == "按键 12345" })
     precondition(firstTexts.contains { $0.stringValue == "点击 1亿" && $0.toolTip == "点击 100000000" })
     guard let leave = descendants(settingsView).compactMap({ $0 as? NSButton }).first(where: { $0.title == "退出房间" }) else {
@@ -209,10 +251,10 @@ import AppKit
     let leaveBounds = settingsView.convert(leave.bounds, from: leave)
     precondition(settingsView.bounds.contains(leaveBounds), "Room controls outside settings view")
     settings.refresh(skinID: "pixel-tricolor", scale: 1, showLabels: true, clickThrough: false,
-                     networking: true, keys: 98_765, clicks: 3,
-                     peers: [], networkStatus: "已连接", roomCode: invite, roomConnected: true, nickname: "")
+                     keys: 98_765, clicks: 3,
+                     peers: [], networkStatus: "私密房间 · 1/16", roomCode: invite, roomConnected: true, nickname: "")
     let nextTexts = visibleText()
-    precondition(nextTexts.contains { $0.stringValue == "房间已连接 · 伙伴 0" })
+    precondition(nextTexts.contains { $0.stringValue == "私密房间 · 1/16" })
     precondition(!nextTexts.contains { $0.stringValue == "像素长毛黄白 · bbbb" })
     guard let share = descendants(settingsView).compactMap({ $0 as? NSButton }).first(where: { $0.title == "同步按键和鼠标动作" }) else {
         fatalError("Activity sharing switch missing")

@@ -1,10 +1,8 @@
 using System;
 using System.Collections;
-using System.Net;
-using System.Net.Sockets;
 using System.Reflection;
-using System.Text;
 using System.Collections.Generic;
+using System.Threading;
 
 internal static class FriendNetworkSmokeTest
 {
@@ -19,25 +17,31 @@ internal static class FriendNetworkSmokeTest
         Type networkType = assembly.GetType("WheekKeys.LocalPeers", true);
         Type skinType = assembly.GetType("WheekKeys.PetSkin", true);
         object a = Activator.CreateInstance(networkType, true), b = Activator.CreateInstance(networkType, true);
-        Socket sa = BoundSocket(), sb = BoundSocket();
         try
         {
-            Set(networkType, a, "socket", sa); Set(networkType, b, "socket", sb);
-            SetTargets(networkType, a, (IPEndPoint)sb.LocalEndPoint); SetTargets(networkType, b, (IPEndPoint)sa.LocalEndPoint);
-            Set(networkType, a, "nextInterfaceCheck", double.MaxValue); Set(networkType, b, "nextInterfaceCheck", double.MaxValue);
+            object host = ConnectTestRoom(networkType, a, true);
+            object guest = ConnectTestRoom(networkType, b, false);
             object[] skins = (object[])skinType.GetField("All").GetValue(null);
             object skin = null;
             foreach (object candidate in skins) if ((string)skinType.GetField("Id").GetValue(candidate) == "pixel-longhair-chocolate") skin = candidate;
             Check(skin != null, "test skin exists"); string skinId = "pixel-longhair-chocolate";
             MethodInfo tick = networkType.GetMethod("Tick");
-            tick.Invoke(a, new object[] { 1.0, skin, 31L, 7L, "花生" });
-            while (sb.Poll(0, SelectMode.SelectRead)) sb.Receive(new byte[129]);
-            tick.Invoke(b, new object[] { 1.1, skin, 0L, 0L, "小豆" });
-            tick.Invoke(a, new object[] { 1.1, skin, 31L, 7L, "花生" });
-            tick.Invoke(a, new object[] { 1.13, skin, 31L, 7L, "花生" });
-            tick.Invoke(b, new object[] { 1.13, skin, 0L, 0L, "小豆" });
+            Action<double, long> tickHost = (now, keys) => {
+                tick.Invoke(a, new object[] { now, skin, keys, 7L, "花生" });
+                Relay(host, guest);
+            };
+            Action<double> tickGuest = now => {
+                tick.Invoke(b, new object[] { now, skin, 0L, 0L, "小豆" });
+                Relay(guest, host);
+            };
+            tickHost(1.0, 31);
+            tickGuest(1.1);
+            tickHost(1.1, 31);
+            tickGuest(1.13);
+            tickHost(1.13, 31);
+            tickGuest(1.14);
             IDictionary peers = (IDictionary)networkType.GetProperty("Members").GetValue(b, null);
-            Check(peers.Count == 1, "real UDP peer discovery");
+            Check(peers.Count == 1, "guest admission and room peer sync");
             object peer = null; foreach (DictionaryEntry item in peers) peer = item.Value;
             Check((string)skinType.GetField("Id").GetValue(peer.GetType().GetField("Skin").GetValue(peer)) == skinId, "exact skin update");
             Check((long)peer.GetType().GetField("Keys").GetValue(peer) == 31L && (long)peer.GetType().GetField("Clicks").GetValue(peer) == 7L, "legacy WK1 counters");
@@ -45,7 +49,8 @@ internal static class FriendNetworkSmokeTest
             MethodInfo recordKey = networkType.GetMethod("RecordKey"), recordClick = networkType.GetMethod("RecordClick");
             recordKey.Invoke(a, new object[] { 30, 1.2 }); recordKey.Invoke(a, new object[] { 31, 1.2 });
             recordClick.Invoke(a, new object[] { false, 1.2 }); recordClick.Invoke(a, new object[] { true, 1.2 });
-            tick.Invoke(a, new object[] { 1.2, skin, 31L, 7L, "花生" }); tick.Invoke(b, new object[] { 1.2, skin, 0L, 0L, "小豆" });
+            tickHost(1.2, 31);
+            tickGuest(1.2);
             MethodInfo take = peer.GetType().GetMethod("TryTakeAction"); string[] expected = { "k30", "k31", "l", "r" };
             Check(Take(take, peer, 1.2) == expected[0] && Take(take, peer, 1.23) == null, "batch leaves key animation visible");
             Check(Take(take, peer, 1.26) == expected[1] && Take(take, peer, 1.32) == expected[2], "keys and left mouse replay in order");
@@ -76,39 +81,90 @@ internal static class FriendNetworkSmokeTest
             Check(Take(take, peer, 2.5) == null, "expired action discarded");
             recordClick.Invoke(b, new object[] { true, 2.5 });
             recordKey.Invoke(b, new object[] { 328, 2.5 });
-            tick.Invoke(b, new object[] { 2.5, skin, 0L, 0L, "小豆" });
-            tick.Invoke(a, new object[] { 2.5, skin, 31L, 7L, "花生" });
+            tickGuest(2.5);
+            tickHost(2.5, 31);
             Check(Take(take, reversePeer, 2.5) == "r" && Take(take, reversePeer, 2.65) == null &&
-                Take(take, reversePeer, 2.7) == "k328", "reverse UDP click then extended key");
+                Take(take, reversePeer, 2.7) == "k328", "reverse room click then extended key");
             networkType.GetProperty("ShareActivity").SetValue(a, false, null);
             recordKey.Invoke(a, new object[] { 30, 2.6 });
             Check(PendingCount(a, networkType) == 0, "local sharing disabled does not queue recording");
-            tick.Invoke(a, new object[] { 2.6, skin, 32L, 7L, "花生" });
-            tick.Invoke(b, new object[] { 2.6, skin, 0L, 0L, "小豆" });
+            tickHost(2.6, 32);
+            tickGuest(2.6);
             Check(!(bool)peer.GetType().GetField("SharingActivity").GetValue(peer), "pause propagates to the other peer");
             Set(networkType, a, "actionSequence", 4L);
             networkType.GetProperty("ShareActivity").SetValue(a, true, null);
             recordKey.Invoke(a, new object[] { 30, 2.8 });
-            tick.Invoke(a, new object[] { 2.8, skin, 33L, 7L, "花生" });
-            tick.Invoke(b, new object[] { 2.8, skin, 0L, 0L, "小豆" });
+            tickHost(2.8, 33);
+            tickGuest(2.8);
             Check((bool)peer.GetType().GetField("SharingActivity").GetValue(peer) && Take(take, peer, 2.8) == "k30", "resume propagates and the first new action arrives");
             ((IDisposable)b).Dispose(); Check(((IDictionary)networkType.GetProperty("Members").GetValue(b, null)).Count == 0 && QueueCount(peer) == 0, "dispose clears peer state and actions");
-            Console.WriteLine("PASS: late UDP join, bidirectional keys/clicks, paced replay, order, pause/resume and disposal");
+            CheckRoomAdmission(assembly);
+            Console.WriteLine("PASS: room friend sync, guest admission, room capacity, and public discovery records");
             return 0;
         }
         catch (Exception e) { Console.Error.WriteLine("FAIL: " + e); return 1; }
         finally { ((IDisposable)a).Dispose(); ((IDisposable)b).Dispose(); }
     }
 
-    private static Socket BoundSocket()
+    private static void CheckRoomAdmission(Assembly assembly)
     {
-        Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-        s.Bind(new IPEndPoint(IPAddress.Loopback, 0)); s.Blocking = false; return s;
+        Type type = assembly.GetType("WheekKeys.RoomMembership", true);
+        MethodInfo receive = type.GetMethod("Receive");
+        MethodInfo next = type.GetMethod("NextPacket");
+        MethodInfo expire = type.GetMethod("Expire");
+        PropertyInfo count = type.GetProperty("Count");
+        PropertyInfo joined = type.GetProperty("Joined");
+        string hostId = 1.ToString("x32"), waitingId = 17.ToString("x32");
+        object host = Activator.CreateInstance(type, hostId, true, true, null);
+        object waiting = Activator.CreateInstance(type, waitingId, false, true, hostId);
+        Action<object, string, double> apply = (member, packet, now) =>
+            receive.Invoke(member, new object[] { packet.Split('|'), now });
+        for (int i = 2; i <= 17; i++) apply(host, "WJ2|" + i.ToString("x32"), 1.0);
+        string full = (string)next.Invoke(host, new object[] { 1.0 });
+        Check((int)count.GetValue(host, null) == 16, "room reserves at most 15 guest seats");
+        apply(waiting, full, 1.0);
+        Check((int)count.GetValue(waiting, null) == 16 && !(bool)joined.GetValue(waiting, null), "17th member must wait");
+        for (int i = 3; i <= 16; i++) apply(host, "WJ2|" + i.ToString("x32"), 7.0);
+        expire.Invoke(host, new object[] { 11.0 });
+        apply(host, "WJ2|" + waitingId, 11.0);
+        string replacement = (string)next.Invoke(host, new object[] { 11.0 });
+        apply(waiting, replacement, 11.0);
+        apply(waiting, full, 11.1);
+        Check((bool)joined.GetValue(waiting, null) && (int)count.GetValue(waiting, null) == 16,
+            "expired seat can be filled and stale rosters do not revoke admission");
+        expire.Invoke(waiting, new object[] { 21.0 });
+        Check(!(bool)joined.GetValue(waiting, null), "guest loses admission without host heartbeat");
+        Type directory = assembly.GetType("WheekKeys.RoomDirectory", true);
+        MethodInfo parse = directory.GetMethod("Parse", BindingFlags.Static | BindingFlags.NonPublic);
+        string advertisement = "WD2|ABCDEFGHIJKLMNOP47UL|" + hostId + "|16|6Iqx55Sf";
+        Check(parse.Invoke(null, new object[] { advertisement, 11.0 }) != null &&
+            parse.Invoke(null, new object[] { advertisement.Replace("|16|", "|17|"), 11.0 }) == null,
+            "public discovery rejects invalid occupancy");
+    }
+
+    private static object ConnectTestRoom(Type networkType, object network, bool hosting)
+    {
+        const string brokerKey = "WHEEKKEYS_ROOM_BROKER";
+        string original = Environment.GetEnvironmentVariable(brokerKey);
+        try
+        {
+            Environment.SetEnvironmentVariable(brokerKey, "invalid");
+            networkType.GetMethod("EnterRoom").Invoke(network, new object[] { "ABCDEFGHIJKLMNOP47UL", hosting, false, null });
+        }
+        finally { Environment.SetEnvironmentVariable(brokerKey, original); }
+        object transport = networkType.GetField("room", PrivateInstance).GetValue(network);
+        Set(transport.GetType(), transport, "connected", true);
+        return transport;
     }
     private static void Set(Type t, object o, string name, object value) { t.GetField(name, PrivateInstance).SetValue(o, value); }
-    private static void SetTargets(Type t, object o, IPEndPoint endpoint)
+
+    private static void Relay(object sender, object recipient)
     {
-        IList list = (IList)t.GetField("targets", PrivateInstance).GetValue(o); list.Add(endpoint);
+        Type transportType = sender.GetType();
+        var outgoing = (Queue<string>)transportType.GetField("outgoing", PrivateInstance).GetValue(sender);
+        var ready = (SemaphoreSlim)transportType.GetField("outgoingReady", PrivateInstance).GetValue(sender);
+        var incoming = (Queue<string>)transportType.GetField("incoming", PrivateInstance).GetValue(recipient);
+        while (ready.Wait(0)) incoming.Enqueue(outgoing.Dequeue());
     }
     private static void Check(bool condition, string name) { assertions++; if (!condition) throw new Exception(name); }
     private static string Take(MethodInfo method, object peer, double now)
