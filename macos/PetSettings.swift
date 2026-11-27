@@ -97,6 +97,7 @@ final class PetSettingsViewController: NSViewController {
     var onScaleChange: ((Double) -> Void)?
     var onShowLabelsChange: ((Bool) -> Void)?
     var onClickThroughChange: ((Bool) -> Void)?
+    var onLoginAtStartupChange: ((Bool) -> Void)?
     var onShareActivityChange: ((Bool) -> Void)?
     var onNetworkingChange: ((Bool) -> Void)?
     var onCreateRoom: (() -> Void)?
@@ -112,6 +113,9 @@ final class PetSettingsViewController: NSViewController {
     private let scaleValue = NSTextField(labelWithString: "58%")
     private let labelsSwitch = NSButton(checkboxWithTitle: "显示按键气泡", target: nil, action: nil)
     private let clickThroughSwitch = NSButton(checkboxWithTitle: "鼠标穿透", target: nil, action: nil)
+    private let loginSwitch = NSButton(checkboxWithTitle: "开机自启", target: nil, action: nil)
+    private let loginMessage = NSTextField(labelWithString: "")
+    private var loginRegistered = false
 
     private let shareSwitch = NSButton(checkboxWithTitle: "同步按键和鼠标动作", target: nil, action: nil)
     private let networkSwitch = NSButton(checkboxWithTitle: "开启局域网联机", target: nil, action: nil)
@@ -204,7 +208,7 @@ final class PetSettingsViewController: NSViewController {
         petScroll.hasVerticalScroller = true
         petScroll.drawsBackground = false
         petScroll.borderType = .noBorder
-        petPage.frame = NSRect(x: 0, y: 0, width: 316, height: 340)
+        petPage.frame = NSRect(x: 0, y: 0, width: 316, height: 370)
         petScroll.documentView = petPage
         add(petScroll, x: 0, top: 100, width: 316, height: 352, to: root)
         add(lanPage, x: 0, top: 100, width: 316, height: 352, to: root)
@@ -269,6 +273,16 @@ final class PetSettingsViewController: NSViewController {
         clickThroughSwitch.font = .systemFont(ofSize: 12)
         clickThroughSwitch.contentTintColor = darkBrown
         add(clickThroughSwitch, x: 18, top: 188 + controlOffset, width: 270, height: 22, to: petPage)
+
+        loginSwitch.allowsMixedState = true
+        loginSwitch.target = self
+        loginSwitch.action = #selector(toggleLoginAtStartup(_:))
+        loginSwitch.font = .systemFont(ofSize: 12)
+        loginSwitch.contentTintColor = darkBrown
+        add(loginSwitch, x: 18, top: 219 + controlOffset, width: 270, height: 22, to: petPage)
+        loginMessage.font = .systemFont(ofSize: 11)
+        loginMessage.textColor = mutedBrown
+        add(loginMessage, x: 18, top: 243 + controlOffset, width: 280, height: 18, to: petPage)
 
         createRoom.target = self
         createRoom.action = #selector(createRoomAction)
@@ -462,6 +476,12 @@ final class PetSettingsViewController: NSViewController {
     @objc private func decreaseScale() { onScaleChange?(-0.1) }
     @objc private func increaseScale() { onScaleChange?(0.1) }
     @objc private func toggleLabels(_ sender: NSButton) { onShowLabelsChange?(sender.state == .on) }
+    func setLoginAtStartup(enabled: Bool, pending: Bool, message: String) {
+        loginRegistered = enabled || pending
+        loginSwitch.state = pending ? .mixed : (enabled ? .on : .off)
+        loginMessage.stringValue = message
+    }
+    @objc private func toggleLoginAtStartup(_ sender: NSButton) { onLoginAtStartupChange?(!loginRegistered) }
     @objc private func toggleClickThrough(_ sender: NSButton) { onClickThroughChange?(sender.state == .on) }
     func setNetworkError(_ message: String) { networkError = message }
     @objc private func toggleShareActivity(_ sender: NSButton) { onShareActivityChange?(sender.state == .on) }

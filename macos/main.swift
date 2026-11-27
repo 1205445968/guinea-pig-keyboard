@@ -1,8 +1,59 @@
 import AppKit
 import ApplicationServices
+import ServiceManagement
 
 func initialPetScale(_ savedScale: Double) -> Double {
     savedScale > 0 ? min(2.0, max(0.5, savedScale)) : 0.58
+}
+
+private enum LoginAtStartup {
+    private static let label = "io.github.gwtt.WheekKeys.login"
+    private static var plist: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/\(label).plist")
+    }
+    private static func legacy() throws -> String? {
+        guard FileManager.default.fileExists(atPath: plist.path) else { return nil }
+        let data = try Data(contentsOf: plist)
+        guard let value = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              value["Label"] as? String == label,
+              let args = value["ProgramArguments"] as? [String], args.count == 3,
+              args[0] == "/usr/bin/open", args[1] == "-a" else {
+            throw NSError(domain: "LoginAtStartup", code: 1, userInfo: [NSLocalizedDescriptionKey: "登录启动文件格式异常，请检查 ~/Library/LaunchAgents/\(label).plist"])
+        }
+        return args[2]
+    }
+    static func state() throws -> (enabled: Bool, pending: Bool, message: String) {
+        if let path = try legacy() {
+            return (true, false, path == Bundle.main.bundleURL.path ? "" : "应用位置已变，请关闭后重新开启")
+        }
+        if #available(macOS 13.0, *) {
+            switch SMAppService.mainApp.status {
+            case .enabled: return (true, false, "")
+            case .notRegistered: return (false, false, "")
+            case .requiresApproval: return (false, true, "待批准，请在系统设置的登录项中允许")
+            default: throw NSError(domain: "LoginAtStartup", code: 2, userInfo: [NSLocalizedDescriptionKey: "无法读取系统登录项状态，请确认应用已安装。"])
+            }
+        }
+        return (false, false, "")
+    }
+    static func setEnabled(_ enabled: Bool) throws {
+        let hasLegacy = try legacy() != nil
+        if !enabled && hasLegacy { try FileManager.default.removeItem(at: plist) }
+        if #available(macOS 13.0, *) {
+            let status = SMAppService.mainApp.status
+            if enabled && !hasLegacy && status != .enabled && status != .requiresApproval { try SMAppService.mainApp.register() }
+            if !enabled && (status == .enabled || status == .requiresApproval) { try SMAppService.mainApp.unregister() }
+        } else if enabled && !hasLegacy {
+            let app = Bundle.main.bundleURL
+            guard app.pathExtension == "app" else {
+                throw NSError(domain: "LoginAtStartup", code: 3, userInfo: [NSLocalizedDescriptionKey: "请从应用包启动后再开启开机自启。"])
+            }
+            let value: [String: Any] = ["Label": label, "ProgramArguments": ["/usr/bin/open", "-a", app.path], "RunAtLoad": true]
+            let data = try PropertyListSerialization.data(fromPropertyList: value, format: .xml, options: 0)
+            try FileManager.default.createDirectory(at: plist.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: plist, options: .atomic)
+        }
+    }
 }
 
 private final class PetPanel: NSPanel {
@@ -219,6 +270,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
                 guard let self, self.clickThrough != value else { return }
                 self.toggleClickThrough()
             }
+            created.onLoginAtStartupChange = { [weak self] value in
+                do { try LoginAtStartup.setEnabled(value) }
+                catch {
+                    let alert = NSAlert(error: error)
+                    alert.messageText = "无法更改开机自启"
+                    alert.informativeText = error.localizedDescription
+                    alert.runModal()
+                }
+                self?.refreshLoginAtStartup()
+            }
             created.onShareActivityChange = { [weak self] value in
                 self?.peers.shareActivity = value
                 self?.defaults.set(value, forKey: "shareActivity")
@@ -264,6 +325,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         guard let controller = settingsController else { return }
         checkForUpdate()
         controller.setUpdateAvailable(updater.downloadURL != nil)
+        refreshLoginAtStartup()
         refreshSettings()
         let source: NSView = anchor ?? pet
         settingsPopover?.show(relativeTo: source.bounds, of: source, preferredEdge: anchor == nil ? .maxY : .minY)
@@ -280,6 +342,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private func downloadUpdate() {
         guard let url = updater.downloadURL else { return }
         NSWorkspace.shared.open(url)
+    }
+    private func refreshLoginAtStartup() {
+        do {
+            let state = try LoginAtStartup.state()
+            settingsController?.setLoginAtStartup(enabled: state.enabled, pending: state.pending, message: state.message)
+        } catch {
+            settingsController?.setLoginAtStartup(enabled: false, pending: false, message: "无法读取开机自启状态")
+        }
     }
     private func refreshSettings() {
         let rows = peers.peers.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }

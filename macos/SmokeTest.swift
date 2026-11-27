@@ -138,6 +138,19 @@ import AppKit
     precondition(availableUpdateButton.isHidden)
     settingsView.layoutSubtreeIfNeeded()
     let controls = descendants(settingsView).compactMap { $0 as? NSButton }
+    guard let login = controls.first(where: { $0.title == "开机自启" }) else { fatalError("Login switch missing") }
+    settings.setLoginAtStartup(enabled: true, pending: false, message: "请在系统设置中允许")
+    precondition(login.state == .on)
+    settings.setLoginAtStartup(enabled: false, pending: false, message: "")
+    precondition(login.state == .off)
+    var loginRequested = false
+    settings.onLoginAtStartupChange = { loginRequested = $0 }
+    login.performClick(nil)
+    precondition(loginRequested, "Login switch did not report the requested state")
+    settings.setLoginAtStartup(enabled: false, pending: true, message: "待批准")
+    precondition(login.state == .mixed)
+    login.performClick(nil)
+    precondition(!loginRequested, "Pending login registration should be cancellable")
     guard let minus = controls.first(where: { $0.title == "−" }), let plus = controls.first(where: { $0.title == "+" }),
           let scale = descendants(settingsView).compactMap({ $0 as? NSTextField }).first(where: { $0.stringValue == "58%" }) else {
         fatalError("Scale controls missing")

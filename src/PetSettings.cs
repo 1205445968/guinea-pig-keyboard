@@ -35,14 +35,20 @@ namespace WheekKeys
         private readonly Dictionary<string, Button> deskSkinButtons = new Dictionary<string, Button>();
         private readonly UniformGrid skinGrid = new UniformGrid { Columns = 3, Rows = 0, Margin = new Thickness(-2, 2, -2, -2) };
         private readonly TextBlock importStatus = Label(10.5, Muted), updateStatus = Label(10.5, Muted);
+        private readonly ToggleButton startupSwitch;
+        private readonly StartupRegistration startupRegistration;
+        private readonly TextBlock startupStatus = Label(10.5, Muted);
         private readonly DispatcherTimer deactivateTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
         private Button installUpdate;
         private readonly TextBlock sizeValue;
-        private bool closing, showingImportDialog;
+        private bool closing, showingImportDialog, refreshingStartup;
 
-        public PetSettings(PetWindow owner)
+        public PetSettings(PetWindow owner) : this(owner, StartupRegistration.CurrentUser) { }
+
+        internal PetSettings(PetWindow owner, StartupRegistration startupRegistration)
         {
             this.owner = owner;
+            this.startupRegistration = startupRegistration;
             Title = "豚鼠键盘设置";
             Width = 340;
             Height = 446;
@@ -99,6 +105,13 @@ namespace WheekKeys
             AutomationProperties.SetName(passthrough, "鼠标穿透");
             toggles.Children.Add(BuildToggleRow("按键气泡", labels));
             toggles.Children.Add(BuildToggleRow("鼠标穿透", passthrough));
+            startupSwitch = MakeSwitch(false, SetStartupEnabled);
+            AutomationProperties.SetAutomationId(startupSwitch, "toggle-start-at-login");
+            AutomationProperties.SetName(startupSwitch, "开机自启");
+            toggles.Children.Add(BuildToggleRow("开机自启", startupSwitch));
+            startupStatus.TextWrapping = TextWrapping.Wrap;
+            toggles.Children.Add(startupStatus);
+            RefreshStartup(null);
             body.Children.Add(toggles);
 
             ScrollViewer petPage = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -345,6 +358,38 @@ namespace WheekKeys
             showingImportDialog = true;
             try { if (dialog.ShowDialog(this) == true) ImportSkin(dialog.FileName); }
             finally { showingImportDialog = false; }
+        }
+
+        private void SetStartupEnabled(bool enabled)
+        {
+            if (refreshingStartup) return;
+            string error = null;
+            try { startupRegistration.SetEnabled(enabled); }
+            catch (Exception ex) { error = "无法修改启动项：" + ex.Message; }
+            RefreshStartup(error);
+        }
+
+        private void RefreshStartup(string message)
+        {
+            refreshingStartup = true;
+            try
+            {
+                StartupRegistration.State state = startupRegistration.Read();
+                startupSwitch.IsChecked = state == StartupRegistration.State.On;
+                startupSwitch.IsEnabled = state != StartupRegistration.State.DisabledByWindows;
+                if (message == null && state == StartupRegistration.State.DisabledByWindows)
+                    message = "请在 Windows 设置的「应用 → 启动」中启用 WheekKeys。";
+                if (message == null && state == StartupRegistration.State.DifferentPath)
+                    message = "启动项指向其他位置。开启后将使用当前的桌宠。";
+            }
+            catch (Exception ex)
+            {
+                startupSwitch.Visibility = Visibility.Hidden;
+                message = "无法读取启动项：" + ex.Message;
+            }
+            finally { refreshingStartup = false; }
+            startupStatus.Text = message ?? "";
+            startupStatus.Visibility = message == null ? Visibility.Collapsed : Visibility.Visible;
         }
 
         private void RefreshUpdate()

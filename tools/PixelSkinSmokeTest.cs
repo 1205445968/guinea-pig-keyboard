@@ -6,10 +6,12 @@ using System.Linq;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Threading;
 using System.Windows.Interop;
 using System.Windows.Media;
+using Microsoft.Win32;
 
 internal static class PixelSkinSmokeTest
 {
@@ -46,6 +48,7 @@ internal static class PixelSkinSmokeTest
             ready.SetValue(owner, true);
             settings = (Window)Activator.CreateInstance(assembly.GetType("WheekKeys.PetSettings", true), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new[] { owner }, null);
             CheckSettingsLabels(settings, assembly, owner);
+            CheckStartupRegistration(assembly, owner);
             FieldInfo buttonsField = settings.GetType().GetField("skinButtons", BindingFlags.Instance | BindingFlags.NonPublic);
             IDictionary buttons = (IDictionary)buttonsField.GetValue(settings);
             object restoredSkin = windowType.GetProperty("ActiveSkin", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(owner, null);
@@ -114,7 +117,7 @@ internal static class PixelSkinSmokeTest
             CheckRenderLifecycle(assembly);
             CheckNetworkCompatibility(assembly);
             CheckReleaseSelection(assembly);
-            Console.WriteLine("PASS: settings labels and roundtrips, 14 pixel skin buttons, wheel animation, render lifecycle, legacy aliases, peer names and counters");
+            Console.WriteLine("PASS: startup registration, settings labels and roundtrips, 14 pixel skin buttons, wheel animation, render lifecycle, legacy aliases, peer names and counters");
             return 0;
         }
         catch (Exception ex)
@@ -193,6 +196,63 @@ internal static class PixelSkinSmokeTest
         var network = (DockPanel)Field(settings, "networkPage");
         var controls = (StackPanel)network.Children[0];
         Check(!controls.Children.OfType<TextBlock>().Any(label => label.Text.Contains("联机时会共享具体按键")), "removed network paragraph");
+    }
+
+    private static void CheckStartupRegistration(Assembly app, object owner)
+    {
+        const string runPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        const string approvalPath = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+        string sandboxPath = @"Software\WheekKeys-StartupTest-" + Guid.NewGuid().ToString("N");
+        BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        Type settingsType = app.GetType("WheekKeys.PetSettings", true);
+        Type registrationType = app.GetType("WheekKeys.StartupRegistration", true);
+        Window panel = null;
+        Func<RegistryKey, ToggleButton> open = delegate(RegistryKey key) {
+            if (panel != null) panel.Close();
+            object registration = Activator.CreateInstance(registrationType, flags, null, new object[] { key }, null);
+            panel = (Window)Activator.CreateInstance(settingsType, flags, null, new[] { owner, registration }, null);
+            return (ToggleButton)Field(panel, "startupSwitch");
+        };
+        Action<ToggleButton> click = button => typeof(ToggleButton).GetMethod("OnClick", flags).Invoke(button, null);
+        using (RegistryKey sandbox = Registry.CurrentUser.CreateSubKey(sandboxPath))
+        try
+        {
+            ToggleButton toggle = open(sandbox);
+            Check(toggle.IsChecked == false && sandbox.OpenSubKey(runPath) == null, "opening settings creates no startup item");
+            click(toggle);
+            using (RegistryKey run = sandbox.OpenSubKey(runPath, true))
+            using (RegistryKey approval = sandbox.CreateSubKey(approvalPath))
+            {
+                string command = "\"" + app.Location + "\"";
+                Check(toggle.IsChecked == true && (string)run.GetValue("WheekKeys") == command, "enable registers quoted executable");
+                run.SetValue("OtherApp", "keep");
+                toggle = open(sandbox);
+                Check(toggle.IsChecked == true, "reopened startup switch reads system state");
+                click(toggle);
+                Check(open(sandbox).IsChecked == false && run.GetValue("WheekKeys") == null && (string)run.GetValue("OtherApp") == "keep", "disable removes only this startup item");
+                using (RegistryKey readOnly = Registry.CurrentUser.OpenSubKey(sandboxPath))
+                {
+                    toggle = open(readOnly);
+                    click(toggle);
+                    Check(toggle.IsChecked == false && run.GetValue("WheekKeys") == null && ((TextBlock)Field(panel, "startupStatus")).Text.Length > 0, "failed startup write restores switch and shows error");
+                }
+                run.SetValue("WheekKeys", @"C:\old\WheekKeys.exe");
+                toggle = open(sandbox);
+                Check(toggle.IsChecked == false, "moved app detects stale startup command");
+                click(toggle);
+                Check((string)run.GetValue("WheekKeys") == command, "enable repairs stale executable path");
+                approval.SetValue("WheekKeys", new byte[] { 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 });
+                toggle = open(sandbox);
+                Check(toggle.IsChecked == false && !toggle.IsEnabled && (string)run.GetValue("WheekKeys") == command, "system-disabled startup remains disabled");
+                approval.DeleteValue("WheekKeys");
+                Check(open(sandbox).IsChecked == true, "system re-enable is reflected");
+            }
+        }
+        finally
+        {
+            if (panel != null) panel.Close();
+            Registry.CurrentUser.DeleteSubKeyTree(sandboxPath);
+        }
     }
 
     private static string ButtonText(Button button)

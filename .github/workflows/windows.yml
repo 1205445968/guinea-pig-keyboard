@@ -171,6 +171,11 @@ jobs:
           - GitHub API 限流时可从官方发布页检查更新。Windows 在回退时通过浏览器打开发布页，macOS 提供新版安装包的下载入口。
           '@
             $notes = $changes + "`n`n" + $notes
+          } elseif ($env:RELEASE_TAG -eq 'v0.1.8') {
+            $changes = @'
+          - Windows 和 macOS 的「桌宠设置」新增「开机自启」开关，开启后从下次登录开始自动启动。
+          '@
+            $notes = $changes + "`n`n" + $notes
           }
           $notes | gh release edit $env:RELEASE_TAG --notes-file - --draft=false
           if ($LASTEXITCODE -ne 0) { throw 'Could not publish release.' }
