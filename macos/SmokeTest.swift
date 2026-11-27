@@ -32,7 +32,8 @@ import AppKit
     precondition(parsed.1.skin == "pixel-longhair-gold-white", "Old peer coat was not mapped")
     precondition(PetSkin.named("gold-white").id == "pixel-golden-white", "Old profile coat was not mapped")
     precondition(PetSkin.all.first?.id == "pixel-tricolor", "Pixel appearance must remain the default")
-    precondition(PetSkin.all.count == 14)
+    precondition(PetSkin.all.count == 18 && PetSkin.all.filter { $0.isProne }.count == 4)
+    precondition(PetSkin.all.allSatisfy { !$0.name.isEmpty && !$0.name.hasPrefix("像素") })
     for (legacy, pixel) in [("tricolor", "tricolor"), ("californian", "californian"),
                             ("gold-white", "golden-white"), ("teddy", "chocolate"),
                             ("silver-agouti", "black-white"), ("longhair", "longhair-gold-white")] {
@@ -113,6 +114,10 @@ import AppKit
     precondition(apply("WS1|\(remoteID)|drawn-unknown|1", now: 16))
     precondition(namedPeers[remoteID]?.skin == previousSkin && namedPeers[remoteID]?.supportsActivity == true &&
                  namedPeers[remoteID]?.sharingActivity == true)
+    for skin in PetSkin.all where skin.isProne {
+        precondition(apply("WS1|\(remoteID)|\(skin.id)|1", now: 16))
+        precondition(namedPeers[remoteID]?.skin == skin.id)
+    }
     precondition(apply(appearance, now: 16) && apply(action, now: 16))
     precondition(apply(valid, now: 16.1) && namedPeers[remoteID]?.skin == "pixel-tricolor")
     precondition(!apply(action, now: 16.2) && !apply("WA1|\(remoteID)|2|k0,l", now: 16.2))
@@ -199,9 +204,11 @@ import AppKit
     precondition(scale.stringValue == "125%")
     let skinButtons = descendants(settingsView).compactMap { $0 as? NSButton }.filter {
         let id = $0.identifier?.rawValue ?? ""
-        return id.hasPrefix("pixel-")
+        return PetSkin.all.contains { $0.id == id }
     }
-    precondition(skinButtons.count == 14 && skinButtons.allSatisfy { settingsView.bounds.contains(settingsView.convert($0.bounds, from: $0)) })
+    precondition(skinButtons.count == 18 && skinButtons.allSatisfy {
+        $0.title == PetSkin.named($0.identifier?.rawValue).name && settingsView.bounds.contains(settingsView.convert($0.bounds, from: $0))
+    })
     precondition(tabs.segmentCount == 3 && tabs.label(forSegment: 2) == "QQ 群")
     tabs.selectedSegment = 2
     tabs.sendAction(tabs.action, to: tabs.target)
@@ -256,7 +263,7 @@ import AppKit
                      peers: [], networkStatus: "私密房间 · 1/16", roomCode: invite, roomConnected: true, nickname: "")
     let nextTexts = visibleText()
     precondition(nextTexts.contains { $0.stringValue == "私密房间 · 1/16" })
-    precondition(!nextTexts.contains { $0.stringValue == "像素长毛黄白 · bbbb" })
+    precondition(!nextTexts.contains { $0.stringValue == "长毛黄白 · bbbb" })
     guard let share = descendants(settingsView).compactMap({ $0 as? NSButton }).first(where: { $0.title == "同步按键和鼠标动作" }) else {
         fatalError("Activity sharing switch missing")
     }

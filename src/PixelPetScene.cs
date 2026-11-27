@@ -121,10 +121,18 @@ namespace WheekKeys
             };
         }
 
-        private void ResetDeskPose()
+        private void SetRestPose(bool prone)
         {
-            left = new Stroke(new Point(183, 201));
-            right = new Stroke(new Point(239, 202));
+            Point leftRest = prone ? new Point(210, 205) : new Point(183, 201);
+            Point rightRest = prone ? new Point(244, 203) : new Point(239, 202);
+            if (skin != null)
+            {
+                left.Rest = leftRest;
+                right.Rest = rightRest;
+                return;
+            }
+            left = new Stroke(leftRest);
+            right = new Stroke(rightRest);
             mousePosition = mouseDestination = new Point(31, 243);
             mouseGrip = 0;
             lastMouseUse = lastClick = lastScroll = double.NegativeInfinity;
@@ -254,7 +262,7 @@ namespace WheekKeys
             set
             {
                 if (value == null || value == skin) return;
-                if (skin == null) ResetDeskPose();
+                if (skin == null || skin.IsProne != value.IsProne) SetRestPose(value.IsProne);
                 ApplyPixelSkin(value);
                 RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.NearestNeighbor);
                 RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
@@ -283,19 +291,10 @@ namespace WheekKeys
         private void ApplyPixelSkin(PetSkin target)
         {
             CoatArt coat = CoatArt.Find(target.PixelCoatId);
-            string cacheKey = target.IsCustom ? target.Id : coat.Id;
+            string cacheKey = target.Id;
             if (!coatEyes.TryGetValue(cacheKey, out Eyes))
             {
-                Color eyeColor = target.CustomEyeColor ?? coat.DefaultEyeColor;
-                BitmapSource body = (BitmapSource)target.CustomBody;
-                if (body == null)
-                {
-                    BitmapSource baseBody = coat.LoadBody(BodySource);
-                    body = (target.CustomFurColor.HasValue || target.CustomInkColor.HasValue)
-                        ? coat.RecolorCustom(baseBody, false, target.CustomFurColor, target.CustomInkColor)
-                        : baseBody;
-                }
-                Eyes = new EyeArt(body, false, eyeColor, target.CustomMouth);
+                Eyes = CreateFace(target, coat);
                 coatEyes[cacheKey] = Eyes;
 
                 BitmapSource paw = (BitmapSource)target.CustomPaw;
@@ -317,28 +316,31 @@ namespace WheekKeys
             ForelegEdge = edge;
         }
 
-        internal static ImageSource Portrait(PetSkin skin)
+        private static EyeArt CreateFace(PetSkin skin, CoatArt coat)
         {
-            CoatArt coat = CoatArt.Find(skin.PixelCoatId);
-            string cacheKey = skin.IsCustom ? skin.Id : coat.Id;
-            ImageSource cached;
-            if (Portraits.TryGetValue(cacheKey, out cached)) return cached;
             BitmapSource image = (BitmapSource)skin.CustomBody;
             if (image == null)
             {
-                BitmapSource baseBody = coat.LoadBody(BodySource);
+                BitmapSource baseBody = skin.IsProne ? Sprite("guinea-pig-prone-" + coat.Id + ".png") : coat.LoadBody(BodySource);
                 image = (skin.CustomFurColor.HasValue || skin.CustomInkColor.HasValue)
                     ? coat.RecolorCustom(baseBody, false, skin.CustomFurColor, skin.CustomInkColor)
                     : baseBody;
             }
             Color eyeColor = skin.CustomEyeColor ?? coat.DefaultEyeColor;
-            EyeArt eyes = new EyeArt(image, false, eyeColor, skin.CustomMouth);
+            return new EyeArt(image, false, eyeColor, skin.CustomMouth, skin.IsProne);
+        }
+
+        internal static ImageSource Portrait(PetSkin skin)
+        {
+            ImageSource cached;
+            if (Portraits.TryGetValue(skin.Id, out cached)) return cached;
+            EyeArt eyes = CreateFace(skin, CoatArt.Find(skin.PixelCoatId));
             var drawing = new DrawingGroup();
-            using (DrawingContext dc = drawing.Open()) eyes.Draw(dc, new Rect(8, 12, 100, 104), new Vector());
+            using (DrawingContext dc = drawing.Open()) eyes.Draw(dc, new Rect(8, 12, 100, skin.IsProne ? 58 : 104), new Vector());
             drawing.Freeze();
             var portrait = new DrawingImage(drawing);
             portrait.Freeze();
-            Portraits[cacheKey] = portrait;
+            Portraits[skin.Id] = portrait;
             return portrait;
         }
 
@@ -454,7 +456,7 @@ namespace WheekKeys
 
         private sealed class Stroke
         {
-            public readonly Point Rest;
+            public Point Rest;
             public Point Target, StartPoint;
             public double Started;
             public int Scan;
@@ -576,7 +578,7 @@ namespace WheekKeys
             startle = new Vector(Math.Round(startle.X), Math.Round(startle.Y + dozeNod));
             lp = new Point(Math.Round(lp.X + startle.X * 0.55), Math.Round(lp.Y + startle.Y * 0.55));
             rp = new Point(Math.Round(rp.X + startle.X * 0.55), Math.Round(rp.Y + startle.Y * 0.55));
-            Rect nextBody = new Rect(126, 39, 174, 181);
+            Rect nextBody = skin.IsProne ? new Rect(151, 135, 118, 69) : new Rect(126, 39, 174, 181);
             nextBody.Offset(lean + startle.X, dip + startle.Y);
             SetBodyBounds(nextBody);
             dc.PushTransform(new TranslateTransform(SceneOffsetX, 0));
@@ -614,7 +616,7 @@ namespace WheekKeys
         {
             dc.PushTransform(new TranslateTransform(tip.X, tip.Y));
             if (!rightSide) dc.PushTransform(new ScaleTransform(-1, 1));
-            dc.DrawImage(Paw, new Rect(-12, -24, 25, 23));
+            dc.DrawImage(Paw, skin.IsProne ? new Rect(-9, -17, 18, 17) : new Rect(-12, -24, 25, 23));
             if (!rightSide) dc.Pop();
             dc.Pop();
         }
@@ -624,8 +626,9 @@ namespace WheekKeys
             Point carriedRest = rest + new Vector(lean, dip);
             Vector extension = tip - carriedRest;
             double reach = Math.Min(1, extension.Length / 35);
-            Point shoulder = new Point(carriedRest.X + Math.Max(-38, Math.Min(38, extension.X * 0.42)),
-                carriedRest.Y - 11 - 20 * reach);
+            double travel = skin.IsProne ? 8 : 38;
+            Point shoulder = new Point(carriedRest.X + Math.Max(-travel, Math.Min(travel, extension.X * 0.42)),
+                carriedRest.Y - 11 - (skin.IsProne ? 9 : 20) * reach);
             Point palm = new Point(tip.X, tip.Y - 11);
             Vector span = palm - shoulder;
             if (span.Length < 6) return;

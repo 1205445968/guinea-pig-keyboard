@@ -205,7 +205,8 @@ final class PetSettingsViewController: NSViewController {
         petScroll.hasVerticalScroller = true
         petScroll.drawsBackground = false
         petScroll.borderType = .noBorder
-        petPage.frame = NSRect(x: 0, y: 0, width: 316, height: 370)
+        let controlOffset = CGFloat(((PetSkin.all.count + 2) / 3 - 2) * 34)
+        petPage.frame = NSRect(x: 0, y: 0, width: 316, height: 268 + controlOffset)
         petScroll.documentView = petPage
         add(petScroll, x: 0, top: 100, width: 316, height: 352, to: root)
         add(roomPage, x: 0, top: 100, width: 316, height: 352, to: root)
@@ -229,7 +230,6 @@ final class PetSettingsViewController: NSViewController {
         let coatLabel = sectionLabel("毛色")
         add(coatLabel, x: 18, top: 14, width: 200, height: 18, to: petPage)
 
-        let controlOffset = CGFloat(((PetSkin.all.count + 2) / 3 - 2) * 34)
         for (index, skin) in PetSkin.all.enumerated() {
             let button = skinButtons[skin.id]!
             button.target = self
@@ -424,7 +424,7 @@ final class PetSettingsViewController: NSViewController {
         for skin in PetSkin.all {
             guard let button = skinButtons[skin.id] else { continue }
             let selected = skin.id == skinID
-            button.title = String(skin.name.dropFirst(2))
+            button.title = skin.name
             button.toolTip = selected ? skin.name + "（当前）" : skin.name
             button.layer?.borderWidth = selected ? 1.5 : 0.5
             button.layer?.borderColor = mutedBrown.withAlphaComponent(selected ? 0.8 : 0.3).cgColor

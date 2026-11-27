@@ -53,7 +53,7 @@ internal static class PixelSkinSmokeTest
             object restoredSkin = windowType.GetProperty("ActiveSkin", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(owner, null);
             Check((string)skinType.GetField("Id").GetValue(restoredSkin) == "pixel-golden-white", "legacy profile migrated");
             Check(buttons.Keys.Cast<string>().Count(id => id.StartsWith("pixel-", StringComparison.Ordinal)) == 14, "pixel skin button count");
-            Check(buttons.Count == 14, "only pixel skin buttons");
+            Check(buttons.Count == 18 && buttons.Keys.Cast<string>().Count(id => id.StartsWith("prone-")) == 4, "four prone skin buttons");
             foreach (DictionaryEntry entry in buttons)
             {
                 Button button = (Button)entry.Value;
@@ -61,6 +61,8 @@ internal static class PixelSkinSmokeTest
                 object active = windowType.GetProperty("ActiveSkin", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).GetValue(owner, null);
                 string activeId = (string)skinType.GetField("Id").GetValue(active);
                 Check(activeId == (string)entry.Key, "clicked skin " + entry.Key);
+                string label = (string)skinType.GetField("Name").GetValue(active);
+                Check(label.Length > 0 && !label.StartsWith("像素") && System.Windows.Automation.AutomationProperties.GetName(button) == label, "coat label " + activeId);
                 string[] lines = File.ReadAllLines(profile);
                 Check(lines.Length >= 10 && lines[5] == activeId, "saved skin " + entry.Key);
                 Check(lines[0] == "111" && lines[1] == "222" && lines[2] == "330" && lines[3] == "False" && lines[4] == "True" && lines[6] == "False" && lines[7] == "12345" && lines[8] == "6789" && lines[9] == "测试豚鼠", "preserved profile " + entry.Key);
@@ -116,7 +118,7 @@ internal static class PixelSkinSmokeTest
             CheckRenderLifecycle(assembly);
             CheckNetworkCompatibility(assembly);
             CheckReleaseSelection(assembly);
-            Console.WriteLine("PASS: startup registration, settings labels and roundtrips, 14 pixel skin buttons, wheel animation, render lifecycle, legacy aliases, peer names and counters");
+            Console.WriteLine("PASS: startup registration, settings labels and roundtrips, 18 skin buttons, wheel animation, render lifecycle, legacy aliases, peer names and counters");
             return 0;
         }
         catch (Exception ex)
@@ -509,8 +511,14 @@ internal static class PixelSkinSmokeTest
             object member = members[session];
             Check((long)member.GetType().GetField("Keys").GetValue(member) == 12345
                 && (long)member.GetType().GetField("Clicks").GetValue(member) == 6789, "peer counters");
+            read.Invoke(peer, new object[] { "WK1|" + session + "|longhair|12345|6789", 10.05 });
             object peerSkin = member.GetType().GetField("Skin").GetValue(member);
             Check((string)skinType.GetField("Id").GetValue(peerSkin) == "pixel-longhair-gold-white", "legacy peer skin mapped");
+            foreach (string id in new[] { "prone-tricolor", "prone-black-white", "prone-golden-white", "prone-cream" })
+            {
+                read.Invoke(peer, new object[] { "WS1|" + session + "|" + id + "|1", 10.1 });
+                Check((string)skinType.GetField("Id").GetValue(member.GetType().GetField("Skin").GetValue(member)) == id, "exact prone peer " + id);
+            }
             foreach (string legacyId in nativeIds)
             {
                 read.Invoke(peer, new object[] { "WS1|" + session + "|drawn-" + legacyId + "|1", 10.1 });

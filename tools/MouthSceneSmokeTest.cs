@@ -87,7 +87,7 @@ internal static class MouthSceneSmokeTest
                     if (sourceRegion.Contains(new Point(x, y))) continue;
                     for (int c = 0; c < 4; c++) Check(raw[0][i + c] == raw[3][i + c], id + " source art outside mouth preserved");
                 }
-                Rect area = new Rect(198, 112, 50, 42);
+                Rect area = id.StartsWith("prone-") ? new Rect(260, 174, 17, 15) : new Rect(198, 112, 50, 42);
                 for (int y = 0; y < 308; y++) for (int x = 0; x < 400; x++)
                 {
                     int index = (y * 400 + x) * 4;

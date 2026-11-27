@@ -13,16 +13,16 @@ namespace WheekKeys
         private readonly Rect region;
         private readonly byte[] original;
 
-        public MouthArt(BitmapSource source, bool pixel, BitmapSource openMouth = null)
+        public MouthArt(BitmapSource source, bool pixel, BitmapSource openMouth = null, bool prone = false)
         {
             width = source.PixelWidth; height = source.PixelHeight; stride = width * 4;
-            region = pixel ? new Rect(width * 0.385, height * 48.0 / 104, width * 0.24, height * 18.0 / 104)
+            region = prone ? new Rect(87, 39, 11, 11) : pixel ? new Rect(width * 0.385, height * 48.0 / 104, width * 0.24, height * 18.0 / 104)
                 : new Rect(width * 0.84, height * 0.60, width * 0.145, height * 0.15);
             original = new byte[stride * height];
             new FormatConvertedBitmap(source, PixelFormats.Pbgra32, null, 0).CopyPixels(original, stride, 0);
             if (pixel && openMouth != null)
             {
-                CreatePixelMouths(source, openMouth);
+                CreatePixelMouths(source, openMouth, prone ? 87 : 42, prone ? 39 : 49);
                 return;
             }
             Pixels[0] = original; Frames[0] = source;
@@ -60,7 +60,7 @@ namespace WheekKeys
             }
         }
 
-        private void CreatePixelMouths(BitmapSource source, BitmapSource mouth)
+        private void CreatePixelMouths(BitmapSource source, BitmapSource mouth, int left, int top)
         {
             int patchStride = mouth.PixelWidth * 4;
             byte[] patch = new byte[patchStride * mouth.PixelHeight];
@@ -71,11 +71,10 @@ namespace WheekKeys
                 if (frame < 3)
                 {
                     int rows = Math.Max(1, mouth.PixelHeight * (3 - frame) / 3);
-                    int top = 49;
                     for (int y = 0; y < rows; y++)
                         for (int x = 0; x < mouth.PixelWidth; x++)
                         {
-                            int targetX = 42 + x, targetY = top + y;
+                            int targetX = left + x, targetY = top + y;
                             if (!Interior(targetX, targetY, 2)) continue;
                             int sampleY = Math.Min(mouth.PixelHeight - 1, (2 * y + 1) * mouth.PixelHeight / (2 * rows));
                             int from = sampleY * patchStride + x * 4;

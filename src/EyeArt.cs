@@ -11,6 +11,11 @@ namespace WheekKeys
         private const int RightX = 65;
         private const int EyeY = 30;
         private const int EyeSize = 6;
+        private static readonly int[] FrontEyes = { LeftX, RightX };
+        private static readonly int[] ProfileEye = { 73 };
+        private readonly int[] _eyePositions;
+        private readonly double _eyeHeightRatio;
+        private readonly double _faceCenterX;
         private const int Padding = 8;
         private const int BodyLift = 4;
         private const double FacePull = 2.5;
@@ -41,11 +46,14 @@ namespace WheekKeys
 
         public EyeArt(BitmapSource source, bool clearEyes, Color eyeColor) : this(source, clearEyes, eyeColor, null) { }
 
-        public EyeArt(BitmapSource source, bool clearEyes, Color eyeColor, BitmapSource customMouth)
+        public EyeArt(BitmapSource source, bool clearEyes, Color eyeColor, BitmapSource customMouth, bool prone = false)
         {
             if (source == null) throw new ArgumentNullException("source");
             _sourceWidth = source.PixelWidth;
             _sourceHeight = source.PixelHeight;
+            _eyePositions = prone ? ProfileEye : FrontEyes;
+            _eyeHeightRatio = prone ? 19.0 / 58 : EyeY / 104.0;
+            _faceCenterX = _sourceWidth * (prone ? 0.77 : 0.50);
             var converted = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
             int stride = _sourceWidth * 4;
             byte[] pixels = new byte[stride * _sourceHeight];
@@ -67,19 +75,19 @@ namespace WheekKeys
             Body.Freeze();
             _bodyPixels = new byte[body.Length];
             new FormatConvertedBitmap(Body, PixelFormats.Pbgra32, null, 0).CopyPixels(_bodyPixels, stride, 0);
-            _mouth = new MouthArt(Body, true, customMouth ?? OpenMouth);
-            _dozeMouthPixels = new[] {
-                _mouth.Pixels[3],
-                PatchDozeMouth(_bodyPixels, _sourceWidth, _sourceHeight, PeepMouth, 45, 51),
-                PatchDozeMouth(_bodyPixels, _sourceWidth, _sourceHeight, YawnMouth, 45, 48)
-            };
+            _mouth = new MouthArt(Body, true, customMouth ?? (prone ? PeepMouth : OpenMouth), prone);
+            _dozeMouthPixels = new[] { _mouth.Pixels[3], _bodyPixels, _bodyPixels };
+            if (_sourceWidth == 100 && _sourceHeight == (prone ? 58 : 104))
+            {
+                _dozeMouthPixels[1] = PatchDozeMouth(_bodyPixels, _sourceWidth, _sourceHeight, PeepMouth, prone ? 87 : 45, prone ? 39 : 51);
+                _dozeMouthPixels[2] = PatchDozeMouth(_bodyPixels, _sourceWidth, _sourceHeight, YawnMouth, prone ? 86 : 45, prone ? 37 : 48);
+            }
             _faceWeights = CreateFaceWeights();
         }
 
         private static byte[] PatchDozeMouth(byte[] basePixels, int width, int height, BitmapSource patchSprite, int left, int top)
         {
             byte[] result = (byte[])basePixels.Clone();
-            if (width != 100 || height != 104 || patchSprite == null) return result;
             int stride = width * 4;
             int pw = patchSprite.PixelWidth, ph = patchSprite.PixelHeight, pStride = pw * 4;
             byte[] patch = new byte[pStride * ph];
@@ -104,8 +112,9 @@ namespace WheekKeys
 
         public Vector Offset(Point cursor, Rect bodyBounds)
         {
-            Point center = new Point(bodyBounds.X + ((LeftX + RightX + EyeSize) / 2.0) * bodyBounds.Width / _sourceWidth,
-                bodyBounds.Y + (EyeY + EyeSize / 2.0 - BodyLift) * bodyBounds.Height / _sourceHeight);
+            double midX = (_eyePositions[0] + _eyePositions[_eyePositions.Length - 1] + EyeSize) / 2.0;
+            Point center = new Point(bodyBounds.X + midX * bodyBounds.Width / 100,
+                bodyBounds.Y + (_eyeHeightRatio + (EyeSize / 2.0 - BodyLift) / _sourceHeight) * bodyBounds.Height);
             Vector delta = cursor - center;
             double divisor = Math.Max(120, delta.Length);
             return new Vector(Math.Max(-2, Math.Min(2, Math.Round(delta.X / divisor * 2))),
@@ -173,17 +182,14 @@ namespace WheekKeys
         {
             BitmapSource eye = drowsiness > 0 ? _sleepEyes[IdleSleepAnimation.FrameIndex(drowsiness)]
                 : _eyes[Math.Max(0, Math.Min(_eyes.Length - 1, blinkFrame))];
-            dc.DrawImage(eye, EyeBounds(LeftX, bounds, head, eyeScale));
-            dc.DrawImage(eye, EyeBounds(RightX, bounds, head, eyeScale));
+            foreach (int x in _eyePositions) dc.DrawImage(eye, EyeBounds(x, bounds, head, eyeScale));
         }
 
         private Rect EyeBounds(int x, Rect bounds, Vector head, double eyeScale)
         {
-            double elx = LeftX * _sourceWidth / 100.0;
-            double erx = RightX * _sourceWidth / 100.0;
-            double ey = EyeY * _sourceHeight / 104.0;
+            double px = x * _sourceWidth / 100.0;
+            double ey = _eyeHeightRatio * _sourceHeight;
             double es = EyeSize * _sourceWidth / 100.0;
-            double px = x == LeftX ? elx : erx;
             double angle = head.X * TurnRadians;
             Point center = DeformFace(new Point(px + es / 2.0, ey + es / 2.0),
                 head, Math.Cos(angle), Math.Sin(angle));
@@ -224,7 +230,7 @@ namespace WheekKeys
                     if (y + 1 < _sourceHeight) distance[i] = Math.Min(distance[i], distance[i + _sourceWidth] + 1);
                 }
             double[] weights = new double[distance.Length];
-            double cx = _sourceWidth * 0.50, cy = _sourceHeight * (40.0 / 104.0);
+            double cx = _faceCenterX, cy = _sourceHeight * (40.0 / 104.0);
             double rx = _sourceWidth * 0.35, ry = _sourceHeight * (42.0 / 104.0);
             for (int y = 0; y < _sourceHeight; y++)
                 for (int x = 0; x < _sourceWidth; x++)
@@ -253,7 +259,7 @@ namespace WheekKeys
         private Point DeformFace(Point point, Vector direction, double cosine, double sine)
         {
             double weight = FaceWeight(point.X, point.Y);
-            double cx = _sourceWidth * 0.50, cy = _sourceHeight * (40.0 / 104.0);
+            double cx = _faceCenterX, cy = _sourceHeight * (40.0 / 104.0);
             double x = point.X - cx, y = point.Y - cy;
             double dx = x * cosine - y * sine - x + direction.X * FacePull;
             double dy = x * sine + y * cosine - y + direction.Y * FacePull;

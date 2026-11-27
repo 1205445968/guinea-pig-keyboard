@@ -6,25 +6,30 @@ struct PetSkin {
     let body: String
     let paw: String
     let networkID: String
+    let isProne: Bool
     let furColor: CGColor
     let inkColor: CGColor
     private let eyeColor: CGColor
 
     static let all = [
-        PetSkin("tricolor", "像素三花", paw: "tricolor", networkID: "tricolor", darkEyes: true),
-        PetSkin("black-white", "像素黑白", paw: "black-white", networkID: "silver-agouti", darkEyes: true),
-        PetSkin("golden-white", "像素黄白", paw: "golden-white", networkID: "gold-white"),
-        PetSkin("buff", "像素浅金棕", coat: "white", paw: "white", networkID: "gold-white", fur: 0xE6C391),
-        PetSkin("cream", "像素奶油", paw: "cream", networkID: "californian", fur: 0xF5DEAF),
-        PetSkin("chocolate", "像素巧克力", paw: "chocolate", networkID: "teddy", fur: 0xA17B63, ink: 0x4A3127),
-        PetSkin("californian", "像素加州", paw: "tricolor", networkID: "californian"),
-        PetSkin("longhair-gold-white", "像素长毛黄白", coat: "longhair-template", paw: "golden-white", networkID: "longhair"),
-        PetSkin("longhair-tricolor", "像素长毛三花", paw: "tricolor", networkID: "longhair", darkEyes: true),
-        PetSkin("longhair-black-white", "像素长毛黑白", paw: "black-white", networkID: "longhair", darkEyes: true),
-        PetSkin("longhair-buff", "像素长毛浅金棕", paw: "white", networkID: "longhair", fur: 0xE6C391),
-        PetSkin("longhair-cream", "像素长毛奶油", paw: "cream", networkID: "longhair", fur: 0xF5DEAF),
-        PetSkin("longhair-chocolate", "像素长毛巧克力", paw: "chocolate", networkID: "longhair", fur: 0xA17B63, ink: 0x4A3127),
-        PetSkin("longhair-californian", "像素长毛加州", paw: "tricolor", networkID: "longhair")
+        PetSkin("tricolor", "三花", paw: "tricolor", networkID: "tricolor", darkEyes: true),
+        PetSkin("black-white", "黑白", paw: "black-white", networkID: "silver-agouti", darkEyes: true),
+        PetSkin("golden-white", "黄白", paw: "golden-white", networkID: "gold-white"),
+        PetSkin("buff", "浅金棕", coat: "white", paw: "white", networkID: "gold-white", fur: 0xE6C391),
+        PetSkin("cream", "奶油", paw: "cream", networkID: "californian", fur: 0xF5DEAF),
+        PetSkin("chocolate", "巧克力", paw: "chocolate", networkID: "teddy", fur: 0xA17B63, ink: 0x4A3127),
+        PetSkin("californian", "加州", paw: "tricolor", networkID: "californian"),
+        PetSkin("longhair-gold-white", "长毛黄白", coat: "longhair-template", paw: "golden-white", networkID: "longhair"),
+        PetSkin("longhair-tricolor", "长毛三花", paw: "tricolor", networkID: "longhair", darkEyes: true),
+        PetSkin("longhair-black-white", "长毛黑白", paw: "black-white", networkID: "longhair", darkEyes: true),
+        PetSkin("longhair-buff", "长毛浅金棕", paw: "white", networkID: "longhair", fur: 0xE6C391),
+        PetSkin("longhair-cream", "长毛奶油", paw: "cream", networkID: "longhair", fur: 0xF5DEAF),
+        PetSkin("longhair-chocolate", "长毛巧克力", paw: "chocolate", networkID: "longhair", fur: 0xA17B63, ink: 0x4A3127),
+        PetSkin("longhair-californian", "长毛加州", paw: "tricolor", networkID: "longhair"),
+        PetSkin("tricolor", "趴趴三花", paw: "tricolor", networkID: "tricolor", darkEyes: true, prone: true),
+        PetSkin("black-white", "趴趴黑白", paw: "black-white", networkID: "silver-agouti", darkEyes: true, prone: true),
+        PetSkin("golden-white", "趴趴黄白", paw: "golden-white", networkID: "gold-white", prone: true),
+        PetSkin("cream", "趴趴奶油", paw: "cream", networkID: "californian", fur: 0xF5DEAF, prone: true)
     ]
 
     private static let legacyIDs = [
@@ -41,10 +46,11 @@ struct PetSkin {
     private static let glint = color(0xFFF0D5)
 
     private init(_ id: String, _ name: String, coat: String? = nil, paw: String, networkID: String,
-                 fur: UInt32 = 0xFFFAF1, ink: UInt32 = 0x624737, darkEyes: Bool = false) {
-        self.id = "pixel-" + id
+                 fur: UInt32 = 0xFFFAF1, ink: UInt32 = 0x624737, darkEyes: Bool = false, prone: Bool = false) {
+        self.isProne = prone
+        self.id = (prone ? "prone-" : "pixel-") + id
         self.name = name
-        self.body = "guinea-pig-\(coat ?? id).png"
+        self.body = "guinea-pig-" + (prone ? self.id : (coat ?? id)) + ".png"
         self.paw = "paw-\(paw).png"
         self.networkID = networkID
         self.furColor = Self.color(fur)
@@ -68,23 +74,25 @@ struct PetSkin {
     func drawEyes(in rect: CGRect, frame: Int, context: CGContext) {
         let offset = Self.gaze.indices.contains(frame) ? Self.gaze[frame] : .zero
         let rows = frame == 11 ? Self.closedEye : frame >= 9 ? Self.halfEye : Self.openEye
-        let sx = rect.width / 100, sy = rect.height / 104
+        let sx = rect.width / 100, sy = rect.height / (isProne ? 58 : 104)
+        let positions: [CGFloat] = isProne ? [73] : [30, 65]
+        let eyeY: CGFloat = isProne ? 19 : 30
         context.saveGState()
         context.setShouldAntialias(false)
         context.setFillColor(eyeColor)
-        for x in [CGFloat(30), CGFloat(65)] {
+        for x in positions {
             for (y, row) in rows.enumerated() {
                 for column in 0..<6 where row & (0b100000 >> column) != 0 {
                     context.fill(CGRect(x: rect.minX + (x + CGFloat(column) + offset.x) * sx,
-                                        y: rect.minY + (30 + CGFloat(y) + offset.y) * sy, width: sx, height: sy))
+                                        y: rect.minY + (eyeY + CGFloat(y) + offset.y) * sy, width: sx, height: sy))
                 }
             }
         }
         if frame < 9 {
             context.setFillColor(Self.glint)
-            for x in [CGFloat(31), CGFloat(66)] {
-                context.fill(CGRect(x: rect.minX + (x + offset.x) * sx,
-                                    y: rect.minY + (31 + offset.y) * sy, width: sx, height: sy))
+            for x in positions {
+                context.fill(CGRect(x: rect.minX + (x + 1 + offset.x) * sx,
+                                    y: rect.minY + (eyeY + 1 + offset.y) * sy, width: sx, height: sy))
             }
         }
         context.restoreGState()
@@ -96,8 +104,12 @@ struct PetSkin {
             guard let context = NSGraphicsContext.current?.cgContext else { return false }
             context.saveGState()
             context.interpolationQuality = .none
-            image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-            self.drawEyes(in: rect, frame: 0, context: context)
+            let height = self.isProne ? CGFloat(58) : 104
+            let scale = min(rect.width / 100, rect.height / height)
+            let bodyRect = CGRect(x: rect.midX - 50 * scale, y: rect.midY - height * scale / 2,
+                                  width: 100 * scale, height: height * scale)
+            image.draw(in: bodyRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            self.drawEyes(in: bodyRect, frame: 0, context: context)
             context.restoreGState()
             return true
         }

@@ -41,7 +41,7 @@ final class PetView: NSView {
         let right: Bool
     }
     private final class Stroke {
-        let rest: CGPoint
+        var rest: CGPoint
         var start: CGPoint
         var target: CGPoint
         var started: TimeInterval = 0
@@ -205,6 +205,8 @@ final class PetView: NSView {
     }
     func selectSkin(_ id: String) {
         skin = PetSkin.named(id)
+        left.rest = skin.isProne ? CGPoint(x: 210, y: 210) : CGPoint(x: 172, y: 215)
+        right.rest = skin.isProne ? CGPoint(x: 244, y: 208) : CGPoint(x: 215, y: 213)
         needsDisplay = true
     }
     func pressKey(_ keyCode: UInt16) {
@@ -356,7 +358,10 @@ final class PetView: NSView {
         lp = mix(lp, mouseTip, grip)
         lp.y -= sin(grip * .pi) * 5
         let nod = CGFloat((doze?.nod ?? 0) * 2)
-        let body = CGRect(x: 126 + lean.rounded(), y: 39 + dip.rounded() + nod, width: 174, height: 181 - nod)
+        var body = skin.isProne ? CGRect(x: 151, y: 135, width: 118, height: 69)
+                                : CGRect(x: 126, y: 39, width: 174, height: 181)
+        body = body.offsetBy(dx: lean.rounded(), dy: dip.rounded() + nod)
+        body.size.height -= nod
         return Pose(body: body,
                     leftTip: lp, rightTip: rp)
     }
@@ -432,10 +437,12 @@ final class PetView: NSView {
         let bodyRect = pose.body
         sprite(skin.body, bodyRect, ctx)
         if mouth > 0 {
-            let sx = bodyRect.width / 100, sy = bodyRect.height / 104
+            let sx = bodyRect.width / 100, sy = bodyRect.height / (skin.isProne ? 58 : 104)
+            let x: CGFloat = skin.isProne ? 87 : 45
+            let y: CGFloat = skin.isProne ? 39 : 49
             sprite(mouth == 1 ? "mouth-peep.png" : "mouth-yawn.png",
-                   CGRect(x: bodyRect.minX + 45 * sx, y: bodyRect.minY + 49 * sy,
-                          width: 11 * sx, height: (mouth == 1 ? 5 : 11) * sy), ctx)
+                   CGRect(x: bodyRect.minX + x * sx, y: bodyRect.minY + y * sy,
+                          width: (skin.isProne ? 9 : 11) * sx, height: (mouth == 1 ? 5 : (skin.isProne ? 6 : 11)) * sy), ctx)
         }
         skin.drawEyes(in: bodyRect, frame: eyeFrame, context: ctx)
         drawDeskAndPaws(pose, l: l, r: r, mouseFrame: mouseFrame, ctx)
@@ -475,7 +482,7 @@ final class PetView: NSView {
     }
     private func drawPaw(_ tip: CGPoint, _ chest: CGRect, _ far: Bool, _ ctx: CGContext) {
         let grip = far ? CGFloat(0) : smooth(mouseGrip)
-        let anchorX = chest.minX + (far ? 89 : 46)
+        let anchorX = chest.minX + (skin.isProne ? (far ? 93 : 59) : (far ? 89 : 46))
         let shoulder = CGPoint(x: anchorX + max(-13, min(13, (tip.x - anchorX) * 0.30)),
                                y: chest.minY + chest.height * (153.0 / 181.0))
         let reachX = tip.x - shoulder.x, reachY = tip.y - shoulder.y

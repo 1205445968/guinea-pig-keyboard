@@ -8,20 +8,24 @@ namespace WheekKeys
     internal sealed class PetSkin
     {
         public static readonly PetSkin[] All = {
-            new PetSkin("pixel-tricolor", "像素三花", "tricolor", "tricolor"),
-            new PetSkin("pixel-black-white", "像素黑白", "black-white", "silver-agouti"),
-            new PetSkin("pixel-golden-white", "像素黄白", "golden-white", "gold-white"),
-            new PetSkin("pixel-buff", "像素浅金棕", "white", "gold-white"),
-            new PetSkin("pixel-cream", "像素奶油", "cream", "californian"),
-            new PetSkin("pixel-chocolate", "像素巧克力", "chocolate", "teddy"),
-            new PetSkin("pixel-californian", "像素加州", "californian", "californian"),
-            new PetSkin("pixel-longhair-gold-white", "像素长毛黄白", "longhair-template", "longhair"),
-            new PetSkin("pixel-longhair-tricolor", "像素长毛三花", "longhair-tricolor", "longhair"),
-            new PetSkin("pixel-longhair-black-white", "像素长毛黑白", "longhair-black-white", "longhair"),
-            new PetSkin("pixel-longhair-buff", "像素长毛浅金棕", "longhair-buff", "longhair"),
-            new PetSkin("pixel-longhair-cream", "像素长毛奶油", "longhair-cream", "longhair"),
-            new PetSkin("pixel-longhair-chocolate", "像素长毛巧克力", "longhair-chocolate", "longhair"),
-            new PetSkin("pixel-longhair-californian", "像素长毛加州", "longhair-californian", "longhair")
+            new PetSkin("pixel-tricolor", "三花", "tricolor", "tricolor"),
+            new PetSkin("pixel-black-white", "黑白", "black-white", "silver-agouti"),
+            new PetSkin("pixel-golden-white", "黄白", "golden-white", "gold-white"),
+            new PetSkin("pixel-buff", "浅金棕", "white", "gold-white"),
+            new PetSkin("pixel-cream", "奶油", "cream", "californian"),
+            new PetSkin("pixel-chocolate", "巧克力", "chocolate", "teddy"),
+            new PetSkin("pixel-californian", "加州", "californian", "californian"),
+            new PetSkin("pixel-longhair-gold-white", "长毛黄白", "longhair-template", "longhair"),
+            new PetSkin("pixel-longhair-tricolor", "长毛三花", "longhair-tricolor", "longhair"),
+            new PetSkin("pixel-longhair-black-white", "长毛黑白", "longhair-black-white", "longhair"),
+            new PetSkin("pixel-longhair-buff", "长毛浅金棕", "longhair-buff", "longhair"),
+            new PetSkin("pixel-longhair-cream", "长毛奶油", "longhair-cream", "longhair"),
+            new PetSkin("pixel-longhair-chocolate", "长毛巧克力", "longhair-chocolate", "longhair"),
+            new PetSkin("pixel-longhair-californian", "长毛加州", "longhair-californian", "longhair"),
+            new PetSkin("prone-tricolor", "趴趴三花", "tricolor", "tricolor", true),
+            new PetSkin("prone-black-white", "趴趴黑白", "black-white", "silver-agouti", true),
+            new PetSkin("prone-golden-white", "趴趴黄白", "golden-white", "gold-white", true),
+            new PetSkin("prone-cream", "趴趴奶油", "cream", "californian", true)
         };
 
         private static readonly SortedDictionary<string, PetSkin> custom = new SortedDictionary<string, PetSkin>(StringComparer.Ordinal);
@@ -32,6 +36,7 @@ namespace WheekKeys
         public readonly string Name;
         public readonly string PixelCoatId;
         public readonly string NetworkId;
+        public readonly bool IsProne;
         public bool IsCustom { get { return BaseSkin != null; } }
         public PetSkin BaseSkin { get; private set; }
         public BitmapImage CustomBody { get; internal set; }
@@ -42,19 +47,20 @@ namespace WheekKeys
         public Color? CustomEyeColor { get; internal set; }
         public string Author { get; internal set; }
 
-        private PetSkin(string id, string name, string pixelCoatId, string networkId)
+        private PetSkin(string id, string name, string pixelCoatId, string networkId, bool prone = false)
         {
             Id = id;
             Name = name;
             PixelCoatId = pixelCoatId;
             NetworkId = networkId;
+            IsProne = prone;
         }
 
         internal static PetSkin CreateCustom(string id, string name, string baseCoat)
         {
             PetSkin basis = Find(baseCoat);
             if (basis == null || basis.IsCustom) basis = All[0];
-            return new PetSkin("wheek-" + id, name, basis.PixelCoatId, basis.NetworkId) { BaseSkin = basis };
+            return new PetSkin("wheek-" + id, name, basis.PixelCoatId, basis.NetworkId, basis.IsProne) { BaseSkin = basis };
         }
 
         internal static void Register(PetSkin skin)
